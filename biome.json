@@ -14,7 +14,8 @@
       "!**/playwright-report",
       "!**/pnpm-lock.yaml",
       "!**/.sst",
-      "!**/sst.config.ts"
+      "!**/sst.config.ts",
+      "!**/sst-env.d.ts"
     ]
   },
   "formatter": {
