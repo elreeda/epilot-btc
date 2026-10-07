@@ -16,5 +16,6 @@
     "web/**/*.tsx",
     "test/**/*.ts",
     "*.ts"
-  ]
+  ],
+  "exclude": ["sst.config.ts", ".sst"]
 }

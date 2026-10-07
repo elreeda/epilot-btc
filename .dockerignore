@@ -4,3 +4,12 @@ node_modules
 .env.*
 playwright-report
 test-results
+.sst
+docs
+web/test
+server/test
+test
+playwright.config.ts
+vitest.config.ts
+vitest.integration.config.ts
+biome.json

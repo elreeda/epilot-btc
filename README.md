@@ -89,6 +89,62 @@ pnpm test:e2e
 
 The `createdb` step is needed once. Integration tests destructively reset **only** `btc_test`; never point `TEST_DATABASE_URL` at a real database. Unit tests cover precise rule boundaries and pagination/failure cases. Integration tests exercise real PostgreSQL transactions and API behavior. Browser tests use clearly isolated API fixtures to verify UI states, refresh, tabs, keyboard controls, and mobile layout; they do not claim live Coinbase end-to-end coverage. Live provider validation is a separate explicit check: `pnpm verify:live -- --restart` creates one local points-only round and restarts the watch-mode backend during it. Run it only with `pnpm dev` active. The latest successful evidence is saved in [test/live-verification.json](test/live-verification.json).
 
+
+## Deploy to AWS (SST v4)
+
+This app is **not** a good fit for API-Gateway + Lambda alone. The process keeps:
+
+- a long-lived Coinbase Exchange WebSocket (`matches` + `heartbeat`)
+- REST recovery / verification loops
+- a settlement worker on a 1s tick
+- PostgreSQL session advisory locks for single-leader collection and settlement
+
+Those need always-on compute and a real Postgres. The SST stack therefore provisions:
+
+| Piece | SST component | Why |
+| --- | --- | --- |
+| Network + cheap NAT | `sst.aws.Vpc` (`nat: "ec2"`) | Private Fargate/RDS with outbound access to Coinbase |
+| Database | `sst.aws.Postgres` (RDS 17, `t4g.micro`) | Durable ledger, locks, migrations |
+| API + workers + SPA | `sst.aws.Service` on ECS Fargate (ARM) | Runs the existing Dockerfile (Fastify + workers; serves `web/dist`) |
+| Public HTTP | Application Load Balancer on the service | `/healthz` health checks; same-origin `/api` + UI |
+
+Config lives in [`sst.config.ts`](sst.config.ts) using **`sst@4.17.1`** (npm `latest`). Personal stage name: **`reda`**.
+
+### Prerequisites
+
+1. AWS account with permission for VPC, ECS/ECR, RDS, ELB, IAM, CloudWatch, SSM/Secrets.
+2. Working credentials (`aws configure`, SSO, or env vars). Empty `~/.aws/credentials` will fail.
+3. Docker Desktop running (image build for Fargate).
+4. `pnpm install`
+
+### Deploy
+
+```sh
+# one-time: confirm identity
+aws sts get-caller-identity
+
+pnpm build          # produces web/dist used by the image
+pnpm deploy         # → sst deploy --stage reda
+```
+
+After deploy, SST prints the ALB `url`. Open it, complete a real 60s round, and confirm `/healthz`.
+
+Optional HTTPS: add `loadBalancer.domain` in `sst.config.ts`, set `COOKIE_SECURE=true`, and set `APP_ORIGIN` to the HTTPS origin.
+
+### Tear down
+
+```sh
+pnpm deploy:remove  # → sst remove --stage reda
+```
+
+RDS and related resources are removed for non-`production` stages (`removal: "remove"`). Expect ongoing cost while deployed (Fargate + RDS + NAT EC2 + ALB + public IPv4) even with no players — tear down when finished.
+
+### What we deliberately did not do
+
+- **Lambda for the collector/API**: no durable Coinbase WebSocket, poor fit for advisory-lock workers.
+- **Aurora Serverless pause**: workers need a continuously reachable DB.
+- **Automatic `sst deploy` from this setup commit**: requires your AWS credentials.
+
 ## Deliberate limits
 
 - Single exchange and a single continuously running service process. Outages pause play rather than risk an unsupported result. Database locks permit safe replacement, not a claim of high availability.

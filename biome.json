@@ -12,7 +12,9 @@
       "!**/web/dist",
       "!**/test-results",
       "!**/playwright-report",
-      "!**/pnpm-lock.yaml"
+      "!**/pnpm-lock.yaml",
+      "!**/.sst",
+      "!**/sst.config.ts"
     ]
   },
   "formatter": {
