@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-10-07T10:14:02.857Z",
+  "backendRestartRequested": true,
+  "guess": {
+    "id": "7f66f8ca-c76e-42f2-80ab-0525595b8105",
+    "direction": "up",
+    "status": "resolved",
+    "submittedAt": "2026-10-07T10:12:58.830023Z",
+    "deadline": "2026-10-07T10:13:58.830023Z",
+    "startingTrade": {
+      "id": "1103316714",
+      "time": "2026-10-07T10:12:57.857125Z",
+      "price": "83783.47000000"
+    },
+    "ruleVersion": "first-differing-trade-v1",
+    "settlementTrade": {
+      "id": "1103317024",
+      "time": "2026-10-07T10:13:59.447316Z",
+      "price": "83786.56000000"
+    },
+    "scoreDelta": 1
+  },
+  "score": 1,
+  "verifiedEarliestTrade": true
+}
