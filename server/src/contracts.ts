@@ -12,11 +12,17 @@ export interface Guess {
   status: "pending" | "resolved";
   submittedAt: string;
   deadline: string;
-  startingTrade: TradeEvidence;
+  startingTrade: TradeEvidence | null;
   settlementTrade: TradeEvidence | null;
   scoreDelta: number | null;
   ruleVersion: string;
 }
+export type ResolvedGuess = Guess & {
+  status: "resolved";
+  startingTrade: TradeEvidence;
+  settlementTrade: TradeEvidence;
+  scoreDelta: number;
+};
 export interface GameState {
   serverTime: string;
   score: number;
@@ -32,7 +38,7 @@ export interface GameState {
     message: string | null;
   };
   activeGuess: Guess | null;
-  latestResult: Guess | null;
+  latestResult: ResolvedGuess | null;
 }
 export interface SubmitGuess {
   direction: Direction;
@@ -40,6 +46,6 @@ export interface SubmitGuess {
 }
 
 export interface RoundHistory {
-  rounds: Guess[];
+  rounds: ResolvedGuess[];
   nextCursor: string | null;
 }

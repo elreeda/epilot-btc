@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
+import type { Guess, ResolvedGuess } from "./contracts.js";
 import { transaction } from "./db.js";
 import {
   type Direction,
@@ -48,16 +49,16 @@ export interface GuessRecord {
   status: "pending" | "resolved";
   submitted_us: string;
   deadline_us: string;
-  start_trade_id: string;
-  start_time_us: string;
-  start_price: string;
+  start_trade_id: string | null;
+  start_time_us: string | null;
+  start_price: string | null;
   rule_version: string;
   settlement_trade_id: string | null;
   settlement_time_us: string | null;
   settlement_price: string | null;
   score_delta: number | null;
 }
-export function publicGuess(row: GuessRecord | undefined) {
+export function publicGuess(row: GuessRecord | undefined): Guess | null {
   if (!row) return null;
   return {
     id: row.id,
@@ -65,20 +66,40 @@ export function publicGuess(row: GuessRecord | undefined) {
     status: row.status,
     submittedAt: isoUs(row.submitted_us),
     deadline: isoUs(row.deadline_us),
-    startingTrade: {
-      id: row.start_trade_id,
-      time: isoUs(row.start_time_us),
-      price: row.start_price,
-    },
+    startingTrade:
+      row.start_trade_id !== null
+        ? {
+            id: row.start_trade_id,
+            time: isoUs(row.start_time_us!),
+            price: row.start_price!,
+          }
+        : null,
     ruleVersion: row.rule_version,
     settlementTrade: row.settlement_trade_id
       ? {
           id: row.settlement_trade_id,
           time: isoUs(row.settlement_time_us!),
-          price: row.settlement_price,
+          price: row.settlement_price!,
         }
       : null,
     scoreDelta: row.score_delta,
+  };
+}
+function resolvedGuess(row: GuessRecord): ResolvedGuess {
+  const guess = publicGuess(row)!;
+  if (
+    guess.status !== "resolved" ||
+    !guess.startingTrade ||
+    !guess.settlementTrade ||
+    guess.scoreDelta === null
+  )
+    throw new Error("Resolved round has incomplete evidence");
+  return {
+    ...guess,
+    status: "resolved",
+    startingTrade: guess.startingTrade,
+    settlementTrade: guess.settlementTrade,
+    scoreDelta: guess.scoreDelta,
   };
 }
 export async function state(pool: pg.Pool, id: string) {
@@ -125,6 +146,7 @@ export async function state(pool: pg.Pool, id: string) {
       (heartbeatAge > 5000 || verificationAge > 5000 || priceAge > 5000)
         ? "stale"
         : m.status;
+    const result = guesses.find((g) => g.status === "resolved");
     return {
       serverTime: m.server_time.toISOString(),
       score: player.score,
@@ -150,7 +172,7 @@ export async function state(pool: pg.Pool, id: string) {
                 : null,
       },
       activeGuess: publicGuess(guesses.find((g) => g.status === "pending")),
-      latestResult: publicGuess(guesses.find((g) => g.status === "resolved")),
+      latestResult: result ? resolvedGuess(result) : null,
     };
   });
 }
@@ -181,7 +203,7 @@ export async function submitGuess(
       [playerId],
     );
     if (rowCount) throw new HttpError(409, "You already have a pending guess.");
-    // Ingestion locks this row too: admission sees a single verified market snapshot.
+    // A fresh verified snapshot gates admission, but its price is not the starting price.
     const {
       rows: [m],
     } = await c.query(
@@ -212,8 +234,8 @@ export async function submitGuess(
     const {
       rows: [guess],
     } = await c.query(
-      `INSERT INTO guesses(id,player_id,idempotency_key,direction,submitted_us,deadline_us,start_trade_id,start_time_us,start_price,rule_version)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO guesses(id,player_id,idempotency_key,direction,submitted_us,deadline_us,rule_version)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
         randomUUID(),
         playerId,
@@ -221,9 +243,6 @@ export async function submitGuess(
         direction,
         submitted.toString(),
         (submitted + 60000000n).toString(),
-        m.latest_trade_id,
-        m.time_us,
-        m.price,
         RULE,
       ],
     );
@@ -326,8 +345,29 @@ export async function settle(c: pg.PoolClient, stillLeader: () => boolean) {
       return 0;
     }
     // Verified historical coverage remains usable even if the current socket is disconnected.
+    // Freeze the last trade at/before acceptance only after complete coverage passes that time.
+    // These separate locking rows cannot be starved by older equal-price rounds awaiting settlement.
+    const { rows: locking } = await c.query<GuessRecord>(
+      `SELECT * FROM guesses WHERE status='pending' AND start_trade_id IS NULL AND submitted_us<$1
+      ORDER BY submitted_us LIMIT 100 FOR UPDATE SKIP LOCKED`,
+      [m.coverage_us],
+    );
+    for (const g of locking) {
+      const {
+        rows: [start],
+      } = await c.query(
+        `SELECT * FROM trades WHERE product=$1 AND time_us<=$2 AND trade_id<=$3
+        ORDER BY time_us DESC,trade_id DESC LIMIT 1`,
+        [PRODUCT, g.submitted_us, m.checkpoint_id],
+      );
+      if (!start) continue; // Missing evidence must leave the round pending.
+      await c.query(
+        "UPDATE guesses SET start_trade_id=$2,start_time_us=$3,start_price=$4 WHERE id=$1",
+        [g.id, start.trade_id, start.time_us, start.price],
+      );
+    }
     const { rows } = await c.query(
-      `SELECT * FROM guesses WHERE status='pending' AND deadline_us<=$1
+      `SELECT * FROM guesses WHERE status='pending' AND start_trade_id IS NOT NULL AND deadline_us<=$1
       AND deadline_us <= (extract(epoch FROM clock_timestamp())*1000000)::bigint ORDER BY deadline_us LIMIT 100 FOR UPDATE SKIP LOCKED`,
       [m.coverage_us],
     );
@@ -386,7 +426,7 @@ export async function roundHistory(
   const visible = rows.slice(0, 20),
     last = visible.at(-1);
   return {
-    rounds: visible.map(publicGuess),
+    rounds: visible.map(resolvedGuess),
     nextCursor:
       rows.length > 20 && last
         ? Buffer.from(`${last.submitted_us}|${last.id}`).toString("base64url")

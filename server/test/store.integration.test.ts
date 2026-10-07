@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { buildApp } from "../src/app.js";
 import { createPool, migrate } from "../src/db.js";
-import { isoUs } from "../src/domain.js";
+import { isoUs, RULE, timestampUs } from "../src/domain.js";
 import {
   commitCoverage,
   roundHistory,
@@ -41,6 +41,10 @@ async function eligible(player: string, direction: "up" | "down" = "up") {
     "UPDATE guesses SET submitted_us=$2,deadline_us=$3 WHERE id=$1",
     [g!.id, (now - 61000000n).toString(), (now - 1000000n).toString()],
   );
+  // Preserve a historical floor trade for the fixture's acceptance time.
+  await pool.query("UPDATE trades SET time_us=$1 WHERE trade_id=1", [
+    (now - 61000000n).toString(),
+  ]);
   return { g: g!, now };
 }
 beforeAll(async () => {
@@ -56,6 +60,206 @@ beforeEach(async () => {
 });
 afterAll(() => pool.end());
 describe("transactional game state", () => {
+  it("locks the historical acceptance price only after coverage passes acceptance", async () => {
+    const p = await session(pool);
+    await seed();
+    const key = randomUUID();
+    const g = (await submitGuess(pool, p.id, "up", key))!;
+    const accepted = timestampUs(g.submittedAt);
+    expect(g.startingTrade).toBeNull();
+    expect(g.ruleVersion).toBe(RULE);
+    expect(timestampUs(g.deadline) - accepted).toBe(60000000n);
+    const c = await pool.connect();
+    try {
+      // Same timestamp: higher ID is the last trade. A later trade must not become the start.
+      await commitCoverage(
+        c,
+        [
+          { id: "2", timeUs: accepted - 1n, price: "102" },
+          { id: "3", timeUs: accepted, price: "103" },
+          { id: "4", timeUs: accepted, price: "104" },
+        ],
+        "4",
+        accepted,
+        new Date(),
+        () => true,
+      );
+      expect(await settle(c, () => true)).toBe(0);
+      expect((await state(pool, p.id)).activeGuess!.startingTrade).toBeNull();
+      await commitCoverage(
+        c,
+        [{ id: "5", timeUs: accepted + 1n, price: "999" }],
+        "5",
+        accepted + 1n,
+        new Date(),
+        () => true,
+      );
+      // An unverified row with a larger ID cannot influence the historical starting trade.
+      await pool.query(
+        "INSERT INTO trades(product,trade_id,time_us,price) VALUES ('BTC-USD',9,$1,1000)",
+        [accepted.toString()],
+      );
+      await pool.query("UPDATE market SET status='recovering'");
+      await settle(c, () => true);
+    } finally {
+      c.release();
+    }
+    const locked = (await state(pool, p.id)).activeGuess!;
+    expect(locked.startingTrade).toEqual({
+      id: "4",
+      time: isoUs(accepted),
+      price: "104",
+    });
+    expect(locked.deadline).toBe(g.deadline);
+    expect((await submitGuess(pool, p.id, "up", key))!.startingTrade).toEqual(
+      locked.startingTrade,
+    );
+    await expect(submitGuess(pool, p.id, "down", key)).rejects.toMatchObject({
+      statusCode: 409,
+    });
+    expect((await state(pool, p.id)).score).toBe(0);
+  });
+
+  it("freezes intent across retry, stale feed and a new worker connection", async () => {
+    const p = await session(pool);
+    await seed();
+    const key = randomUUID();
+    const original = (await submitGuess(pool, p.id, "down", key))!;
+    await pool.query("UPDATE market SET status='recovering'");
+    expect(await submitGuess(pool, p.id, "down", key)).toEqual(original);
+    await expect(
+      submitGuess(pool, p.id, "up", randomUUID()),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    const first = await pool.connect();
+    expect(await settle(first, () => true)).toBe(0);
+    first.release(true);
+    const restarted = await pool.connect();
+    try {
+      await commitCoverage(
+        restarted,
+        [],
+        "1",
+        timestampUs(original.submittedAt) + 1n,
+        new Date(),
+        () => true,
+      );
+      await settle(restarted, () => true);
+    } finally {
+      restarted.release();
+    }
+    const restored = (await state(pool, p.id)).activeGuess!;
+    expect(restored.id).toBe(original.id);
+    expect(restored.direction).toBe("down");
+    expect(restored.deadline).toBe(original.deadline);
+    expect(restored.startingTrade!.id).toBe("1");
+  });
+
+  it.each(["up", "down"] as const)(
+    "uses the recovered start when verification spans the deadline (%s)",
+    async (direction) => {
+      const p = await session(pool);
+      const { g, now } = await eligible(p.id, direction);
+      const submitted = now - 61000000n,
+        deadline = now - 1000000n;
+      const c = await pool.connect();
+      try {
+        await commitCoverage(
+          c,
+          [
+            { id: "2", timeUs: submitted, price: "102.00000001" },
+            { id: "3", timeUs: submitted + 1n, price: "105" },
+            { id: "4", timeUs: deadline, price: "101" },
+            { id: "5", timeUs: now, price: "103" },
+          ],
+          "5",
+          now,
+          new Date(),
+          () => true,
+        );
+        expect(await settle(c, () => true)).toBe(1);
+        expect(await settle(c, () => true)).toBe(0);
+      } finally {
+        c.release();
+      }
+      const result = (await state(pool, p.id)).latestResult!;
+      expect(result.id).toBe(g.id);
+      expect(result.startingTrade).toEqual({
+        id: "2",
+        time: isoUs(submitted),
+        price: "102.00000001",
+      });
+      expect(result.settlementTrade.id).toBe("4");
+      expect(result.scoreDelta).toBe(direction === "up" ? -1 : 1);
+      expect((await state(pool, p.id)).score).toBe(result.scoreDelta);
+    },
+  );
+
+  it("rolls back a price lock on leadership loss and retries without changing acceptance", async () => {
+    const p = await session(pool);
+    await seed();
+    const original = (await submitGuess(pool, p.id, "up", randomUUID()))!;
+    const c = await pool.connect();
+    try {
+      await commitCoverage(
+        c,
+        [],
+        "1",
+        timestampUs(original.submittedAt) + 1n,
+        new Date(),
+        () => true,
+      );
+      let checks = 0;
+      await expect(settle(c, () => ++checks < 2)).rejects.toThrow("leadership");
+      expect((await state(pool, p.id)).activeGuess!.startingTrade).toBeNull();
+      await settle(c, () => true);
+    } finally {
+      c.release();
+    }
+    const locked = (await state(pool, p.id)).activeGuess!;
+    expect(locked.startingTrade!.id).toBe("1");
+    expect(locked.submittedAt).toBe(original.submittedAt);
+    expect(locked.deadline).toBe(original.deadline);
+  });
+
+  it("keeps an existing v1 round's starting price and prevents partial or resolved unlocked evidence", async () => {
+    const p = await session(pool);
+    const { g, now } = await eligible(p.id);
+    await expect(
+      pool.query("UPDATE guesses SET start_trade_id=1 WHERE id=$1", [g.id]),
+    ).rejects.toThrow("complete_start_evidence");
+    await expect(
+      pool.query(
+        "UPDATE guesses SET status='resolved',settlement_trade_id=2,settlement_time_us=$2,settlement_price=101,score_delta=1 WHERE id=$1",
+        [g.id, now.toString()],
+      ),
+    ).rejects.toThrow("complete_start_evidence");
+    await pool.query(
+      "UPDATE guesses SET rule_version='first-differing-trade-v1',start_trade_id=1,start_time_us=$2,start_price=100 WHERE id=$1",
+      [g.id, (now - 61000000n).toString()],
+    );
+    const c = await pool.connect();
+    try {
+      await commitCoverage(
+        c,
+        [
+          { id: "2", timeUs: now - 61000000n, price: "102" },
+          { id: "3", timeUs: now - 1000000n, price: "101" },
+        ],
+        "3",
+        now,
+        new Date(),
+        () => true,
+      );
+      await settle(c, () => true);
+    } finally {
+      c.release();
+    }
+    const result = (await state(pool, p.id)).latestResult!;
+    expect(result.ruleVersion).toBe("first-differing-trade-v1");
+    expect(result.startingTrade.price).toBe("100");
+    expect(result.scoreDelta).toBe(1);
+  });
+
   it("round history is private, newest first, and paginates without duplicates at timestamp ties", async () => {
     const owner = await session(pool),
       other = await session(pool);
@@ -235,6 +439,7 @@ describe("transactional game state", () => {
     const s = await state(pool, p.id);
     expect(s.score).toBe(0);
     expect(s.activeGuess).not.toBeNull();
+    expect(s.activeGuess!.startingTrade).toBeNull();
   });
   it("rolls back trades and checkpoint when leadership is lost", async () => {
     await seed();

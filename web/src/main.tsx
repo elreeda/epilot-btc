@@ -136,19 +136,24 @@ function App() {
         : state?.market.status === "stale"
           ? "Price delayed"
           : "Connecting to market";
+  const locking = !!active && active.startingTrade === null;
   const prompt = active
-    ? remaining > 0
-      ? "Your call is in."
-      : "The minute is up."
+    ? locking
+      ? "Locking price…"
+      : remaining > 0
+        ? "Your call is in."
+        : "The minute is up."
     : state?.latestResult
       ? "Ready for another round?"
       : "Where will Bitcoin go next?";
   const help = active
-    ? remaining > 0
-      ? "Watch the market. Your prediction settles after the minute ends."
-      : !healthy
-        ? "Verifying trades before deciding your result."
-        : "Waiting for the first trade at a different price."
+    ? locking
+      ? "Your direction is saved. Verifying the last Coinbase trade at or before acceptance. The deadline stays fixed."
+      : remaining > 0
+        ? "Watch the market. Your prediction settles after the minute ends."
+        : !healthy
+          ? "Verifying trades before deciding your result."
+          : "Waiting for the first trade at a different price."
     : offline
       ? "Your last known score is shown. Reconnecting automatically."
       : !healthy
@@ -210,7 +215,11 @@ function App() {
                 <strong>
                   {active.direction === "up" ? "↗ Higher" : "↘ Lower"}
                 </strong>
-                <span>From {money(active.startingTrade.price)}</span>
+                <span>
+                  {active.startingTrade
+                    ? `From ${money(active.startingTrade.price)}`
+                    : "Starting price is being verified"}
+                </span>
               </div>
               <div className="clock">
                 <strong>
@@ -218,7 +227,13 @@ function App() {
                     ? `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`
                     : "…"}
                 </strong>
-                <span>{remaining > 0 ? "TO DEADLINE" : "AWAITING RESULT"}</span>
+                <span>
+                  {remaining > 0
+                    ? "TO DEADLINE"
+                    : locking
+                      ? "LOCKING PRICE"
+                      : "AWAITING RESULT"}
+                </span>
               </div>
               <div
                 className="progress"
@@ -358,9 +373,11 @@ function App() {
       <footer>
         <span>HOW IT WORKS</span>
         <p>
-          After 60 seconds, the first Coinbase BTC-USD trade at a different
-          price decides your result. Equal price? We wait. Missing trades? We
-          recover them before settling.
+          Your direction and deadline are saved immediately. We verify the last
+          trade at or before server acceptance as your starting price. After 60
+          seconds, the first Coinbase BTC-USD trade at a different price decides
+          your result. Equal price? We wait. Missing trades? We recover them
+          before settling.
         </p>
         <span className="points-only">
           PLAY FOR POINTS.

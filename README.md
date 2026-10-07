@@ -41,11 +41,13 @@ Alternatively, `docker compose up --build` starts the database and backend. Star
 
 ## Rules and fairness
 
-At acceptance, the server saves its PostgreSQL clock time, direction, and the latest verified persisted Coinbase BTC-USD trade. The deadline is exactly 60 seconds after acceptance. The starting price is the last known verified trade, not an assertion that a trade happened at the instant of the click. Admission requires a heartbeat, successful verification, and latest trade each no more than five seconds old.
+At acceptance, the server freezes the direction and its PostgreSQL clock time. The deadline is exactly 60 seconds after acceptance. The round shows “Locking price…” with `startingTrade: null` until verified coverage strictly passes acceptance. The worker then selects the last Coinbase trade at or before acceptance, ordered by canonical exchange timestamp and trade ID descending. It does not lock the potentially stale price shown when the player submits.
+
+Admission still requires heartbeat, verification, and latest trade each no more than five seconds old; that is a feed-health gate, not the starting-price rule. The clock keeps running during price locking. Delayed verification, refresh, retries, and restart cannot change the direction or extend the deadline. If coverage or starting evidence is unavailable, the round stays pending. This uses the last exchange trade before server acceptance, not a universal price at the browser click. Server and exchange UTC clock alignment remains an operational assumption.
 
 The first trade **at or after** the deadline with a price different from the starting price decides the result. Trades are ordered by exchange timestamp, then trade ID. Equal prices keep the round pending. Up wins on a higher price; down wins on a lower price. Scores can become negative. Exchange timestamps retain microseconds as bigint values and prices use PostgreSQL arbitrary-precision numeric; JavaScript floating point is used only for display formatting.
 
-There is one price source and one versioned rule (`first-differing-trade-v1`). This is a Coinbase Exchange price, not a claim about a universal Bitcoin price. The UI exposes the starting trade, deadline, and settlement trade as evidence.
+There is one price source. New rounds use `verified-acceptance-first-differing-v2`; existing `first-differing-trade-v1` rounds retain their original starting price and rule. This is a Coinbase Exchange price, not a claim about a universal Bitcoin price. The UI exposes the starting trade, deadline, and settlement trade as evidence.
 
 ## Architecture
 
@@ -75,9 +77,9 @@ Provider references: [WebSocket channels](https://docs.cdp.coinbase.com/exchange
 
 ### Transactions and leadership
 
-A partial unique index enforces one pending guess per player. Submission serializes on the player row, checks idempotency before market health, and captures a locked market snapshot. Retrying an accepted request returns its original round, even when market conditions have since changed. Reusing a key with a different direction is a conflict.
+A partial unique index enforces one pending guess per player. Submission serializes on the player row, checks idempotency before market health, and uses a locked market snapshot to gate admission. It saves immutable intent/time with empty starting evidence. Retrying an accepted request returns its original round, even when market conditions have since changed. Reusing a key with a different direction is a conflict.
 
-Settlement runs every second, locks eligible guesses, finds the earliest qualifying verified trade, and changes the guess and score in one transaction. Locks and pending status prevent double awards. A crash rolls back unfinished work; persisted pending guesses are found after restart, without a scheduling handoff to lose.
+The worker runs every second. It first locks starting prices for pending rounds whose acceptance is covered, then locks eligible guesses, finds the earliest qualifying verified trade, and changes the guess and score in one transaction. Locks and pending status prevent double awards. A crash rolls back unfinished work; persisted pending guesses are found after restart, without a scheduling handoff to lose.
 
 Dedicated PostgreSQL sessions hold advisory locks for collector and settlement leadership. During task overlap only one of each worker runs. Session loss stops that worker; it must acquire leadership again before writing. Migration startup is also serialized with an advisory lock. The API stays healthy during provider failure; its health endpoint checks the database, not Coinbase availability.
 
@@ -88,7 +90,7 @@ Dedicated PostgreSQL sessions hold advisory locks for collector and settlement l
 | `POST /api/session`        | Reuse a valid opaque session or create a zero-score player; sets persistent HttpOnly, SameSite=Lax cookie.       |
 | `GET /api/rounds?cursor=…` | Return your completed rounds, newest first, in pages of twenty. The session determines ownership.                |
 | `GET /api/state`           | Return one consistent snapshot of server time, market status/freshness, score, pending guess, and latest result. |
-| `POST /api/guesses`        | Accept `{ "direction": "up" or "down", "idempotencyKey": "UUID" }`; return accepted/existing guess.              |
+| `POST /api/guesses`        | Accept `{ "direction": "up" or "down", "idempotencyKey": "UUID" }`; return accepted/existing guess (starting trade is null while locking).              |
 | `GET /healthz`             | Database health for the load balancer.                                                                           |
 
 Errors: 400 invalid input, 401 no valid session, 403 disallowed write origin, 409 existing pending guess or key conflict, 429 rate limit, 503 market not ready. Bodies contain a user-safe `message`. All API responses are uncached. The anonymous token is random and only its SHA-256 hash is stored. No client-supplied player ID, clock, price, score, or outcome is accepted. Clearing the browser cookie loses access to that anonymous identity; cross-device recovery is outside scope.

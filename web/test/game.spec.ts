@@ -18,7 +18,7 @@ const base = () => ({
   activeGuess: null as any,
   latestResult: null as any,
 });
-async function fixture(context: BrowserContext) {
+async function fixture(context: BrowserContext, locking = false) {
   const state = base();
   let submissions = 0;
   await context.route("**/api/**", async (route) => {
@@ -50,10 +50,11 @@ async function fixture(context: BrowserContext) {
         direction,
         status: "pending",
         deadline: new Date(Date.now() + 60000).toISOString(),
-        startingTrade: trade,
+        submittedAt: new Date().toISOString(),
+        startingTrade: locking ? null : trade,
         settlementTrade: null,
         scoreDelta: null,
-        ruleVersion: "first-differing-trade-v1",
+        ruleVersion: "verified-acceptance-first-differing-v2",
       };
       return route.fulfill({ status: 201, json: state.activeGuess });
     }
@@ -153,4 +154,40 @@ test("keyboard can submit and recovery keeps accepted round visible", async ({
   await expect(
     page.getByText("Verifying trades before deciding your result."),
   ).toBeVisible();
+});
+
+test("locking price survives refresh and recovery without resetting the deadline", async ({
+  page,
+  context,
+}) => {
+  const f = await fixture(context, true);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Higher" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Locking price…" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Starting price is being verified"),
+  ).toBeVisible();
+  const deadline = f.state.activeGuess.deadline;
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Locking price…" }),
+  ).toBeVisible();
+  expect(f.submissions).toBe(1);
+  f.state.market.status = "recovering";
+  f.state.activeGuess.deadline = new Date(Date.now() - 1000).toISOString();
+  await expect(page.getByText("LOCKING PRICE", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Waiting for the first trade at a different price."),
+  ).toHaveCount(0);
+  f.state.market.status = "live";
+  f.state.activeGuess.startingTrade = { ...trade, price: "60002" };
+  f.state.activeGuess.deadline = deadline;
+  await expect(page.getByText("From $60,002.00")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Your call is in." }),
+  ).toBeVisible();
+  expect(f.state.activeGuess.deadline).toBe(deadline);
+  expect(f.submissions).toBe(1);
 });

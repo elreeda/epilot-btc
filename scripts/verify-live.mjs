@@ -38,7 +38,7 @@ console.log(
   JSON.stringify({
     event: "live_round_accepted",
     id: accepted.id,
-    startingPrice: accepted.startingTrade.price,
+    startingPrice: accepted.startingTrade?.price ?? null,
     deadline: accepted.deadline,
   }),
 );
@@ -75,6 +75,16 @@ try {
     `SELECT * FROM trades WHERE product='BTC-USD' AND time_us>=$1 AND time_us<=(SELECT coverage_us FROM market WHERE product='BTC-USD') AND price<>$2 AND trade_id<=(SELECT checkpoint_id FROM market WHERE product='BTC-USD') ORDER BY time_us,trade_id LIMIT 1`,
     [g.deadline_us, g.start_price],
   );
+  const {
+    rows: [expectedStart],
+  } = await pool.query(
+    `SELECT * FROM trades WHERE product='BTC-USD' AND time_us<=$1 AND trade_id<=(SELECT checkpoint_id FROM market WHERE product='BTC-USD') ORDER BY time_us DESC,trade_id DESC LIMIT 1`,
+    [g.submitted_us],
+  );
+  if (!expectedStart || expectedStart.trade_id !== g.start_trade_id)
+    throw new Error(
+      "Starting price did not select last verified trade at/before acceptance",
+    );
   if (!expected || expected.trade_id !== g.settlement_trade_id)
     throw new Error(
       "Settlement did not select earliest verified qualifying trade",
@@ -87,6 +97,7 @@ try {
     guess: result.latestResult,
     score: result.score,
     verifiedEarliestTrade: true,
+    verifiedAcceptanceTrade: true,
   };
   await writeFile(
     new URL("../test/live-verification.json", import.meta.url),
