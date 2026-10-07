@@ -22,7 +22,8 @@
     "verify:live": "node --env-file=.env scripts/verify-live.mjs",
     "deploy": "sst deploy --stage reda",
     "deploy:remove": "sst remove --stage reda",
-    "sst:dev": "sst dev --stage reda"
+    "sst:dev": "sst dev --stage reda",
+    "verify": "bash scripts/verify.sh"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",

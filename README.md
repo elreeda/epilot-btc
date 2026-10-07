@@ -6,6 +6,24 @@ A one-minute BTC-USD prediction game. Players choose higher or lower, receive +1
 
 Use the [onboarding guide](docs/ONBOARDING.md) for local setup, the code map, failure behavior, and first contributions. The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) explains architecture, settlement, recovery, and engineering decisions. Edit the diagrams directly in tldraw.
 
+## Agent onboarding
+
+Fair settlement is a checklist, not vibe coding. Portable Agent Skills live under [`.agents/skills/`](.agents/skills/) (see also root [`AGENTS.md`](AGENTS.md)). Cursor, Codex, and Claude-compatible tooling can discover them from that layout (Claude Code via [`.claude/skills/`](.claude/skills/) symlinks into `.agents/skills/`).
+
+| Skill | Purpose |
+| --- | --- |
+| [`settlement-fairness`](.agents/skills/settlement-fairness/SKILL.md) | Server-owned prices, feed/reconnect expectations, round lifecycle, no client-trusted resolve |
+| [`btc-guess-change`](.agents/skills/btc-guess-change/SKILL.md) | Safe touch points (API, domain, UI, tests) and verify-before-done |
+| [`verify-btc-guess`](.agents/skills/verify-btc-guess/SKILL.md) | Commands and evidence for unit/integration/e2e and optional live checks |
+
+Example prompt:
+
+> Using settlement-fairness and verify-btc-guess, tighten the admission freshness window without accepting client prices. Run `pnpm verify` and report what passed.
+
+**Optional Cursor tip:** install the pstack plugin (`/add-plugin pstack`) and use `/poteto-mode` to route through these skills — not required for other agents.
+
+Local gate: `pnpm verify` (see [`scripts/verify.sh`](scripts/verify.sh)). For a deployed check after SST (stage `reda`), use the ALB URL printed by `sst deploy` and hit `/healthz` — do not invent URLs. Human setup remains in [Engineer onboarding](#engineer-onboarding) and [Verification](#verification).
+
 ## Run locally
 
 Requires Node 24+, pnpm, and Docker Desktop. Start Docker first.
