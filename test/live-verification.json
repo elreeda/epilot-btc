@@ -1,22 +1,21 @@
 {
-  "checkedAt": "2026-10-07T18:58:49.412Z",
+  "checkedAt": "2026-10-08T14:09:13.652Z",
   "backendRestartRequested": true,
   "guess": {
-    "id": "be10a3e7-790e-40e9-9bde-f31319c266fa",
+    "id": "465c867d-5d61-4210-ac17-40a5d85319b5",
     "direction": "up",
     "status": "resolved",
-    "submittedAt": "2026-10-07T18:57:46.306206Z",
-    "deadline": "2026-10-07T18:58:46.306206Z",
+    "submittedAt": "2026-10-08T14:08:09.588128Z",
+    "deadline": "2026-10-08T14:09:09.588128Z",
     "startingTrade": {
-      "id": "1103512813",
-      "time": "2026-10-07T18:57:46.250632Z",
-      "price": "83394.56000000"
+      "id": "1103772941",
+      "time": "2026-10-08T14:08:09.426816Z",
+      "price": "82306.05000000"
     },
-    "ruleVersion": "verified-acceptance-first-differing-v2",
     "settlementTrade": {
-      "id": "1103513021",
-      "time": "2026-10-07T18:58:46.632932Z",
-      "price": "83360.53000000"
+      "id": "1103773235",
+      "time": "2026-10-08T14:09:09.706850Z",
+      "price": "82271.73000000"
     },
     "scoreDelta": -1
   },
