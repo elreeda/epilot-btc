@@ -2,7 +2,7 @@
 
 This guide explains the product, architecture, correctness rules, and code layout for humans and coding agents working on the project. Use the [README](../README.md) for setup and deployment instructions. Coding agents should also read [AGENTS.md](../AGENTS.md) and the relevant repository skills before making changes.
 
-The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) illustrates the architecture, round lifecycle, recovery, and engineering decisions. Edit the diagrams directly in tldraw.
+The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) illustrates the architecture, round lifecycle, recovery, engineering decisions, and contributing with AI and repository skills. Edit the diagrams directly in tldraw.
 
 ## What we are building
 
@@ -69,7 +69,7 @@ Previously verified historical rounds can still settle while the current feed is
 - **Continuously running Node service:** a natural home for the exchange connection and workers. PostgreSQL session advisory locks prevent competing leaders during overlap. This supports recovery, not a claim of high availability.
 - **Deferred starting price:** a fast external feed could exploit a stale verified snapshot as the starting reference. Lock intent first, then establish the historical acceptance trade after verification. This adds a visible locking state while keeping the deadline fixed. Server/exchange UTC clocks must be aligned.
 - **Conservative REST verification:** WebSocket supplies trades and the heartbeat boundary; advancing intervals are verified through REST even when connected. This avoids assuming that the last trade ID proves every intervening event arrived. It costs requests and can add lag.
-- **Canonical REST timestamps:** a live check found occasional one-microsecond differences across transports. Preserve both timestamps; use one consistent clock for all settlements. Price contradictions still halt verification.
+- **Canonical REST timestamps:** the transports can differ by a microsecond. Preserve both timestamps; use one consistent clock for all settlements. Price contradictions still halt verification.
 - **Bounded recovery:** 200 REST pages and 100,000 buffered WebSocket events. A long outage can require operator intervention. The safe result is pending, not a fabricated outcome.
 - **Anonymous returning identity:** low signup friction; clearing the cookie loses access and different browsers count as different players. It is not strong person-level identity.
 - **Personal history:** server-scoped to the current session, newest first, pages of twenty. Keyset pagination uses submission time and ID to avoid skipping tied timestamps.
@@ -78,7 +78,7 @@ Previously verified historical rounds can still settle while the current feed is
 
 The demo is deployed over HTTP. It uses cryptographic browser-generated idempotency keys that work in this environment, but the session cookie cannot have the Secure flag until HTTPS is configured. HTTPS remains a deployment priority.
 
-The original recovery request used a newer-direction cursor at the live edge, which intermittently returned empty pages. Live checks also showed WebSocket trades arriving before REST publication, with incomplete responses cached by the provider. Recovery now lets the target age one second, starts with an older-direction cursor above it, and follows provider cursors back to the checkpoint. Missing evidence still blocks admission; diagnostics include the target and empty-page context. The five-second freshness gate can also block admission when no new trade arrives despite a healthy connection.
+Recovery waits one second for REST publication, fetches the target trade and preceding history, and follows Coinbase's pagination cursors back to the saved checkpoint. Missing evidence keeps affected rounds pending until recovery succeeds. The five-second freshness gate can also block new guesses when no new trade arrives despite a healthy connection.
 
 Security priorities include tightening `trustProxy`, validating security configuration at startup, strengthening session-creation limits, and separating runtime database privileges from migrations. The current in-memory rate limiter is per process. These are known gaps, not protections we claim already exist.
 
