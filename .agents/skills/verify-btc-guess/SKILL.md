@@ -72,7 +72,7 @@ Against **local** (`http://localhost:5173` with `pnpm dev`, or API on `:3000`):
 
 1. `POST /api/session` — Set-Cookie `btc_session`.
 2. `GET /api/state` — market status, server time, score; when live+fresh, guesses allowed.
-3. `POST /api/guesses` with `{ "direction": "up"|"down", "idempotencyKey": "<uuid>" }` — 200 accepted or existing; 503 if market not ready; 409 if pending/conflict.
+3. `POST /api/guesses` with `{ "direction": "up"|"down", "idempotencyKey": "<uuid>" }` — 201 accepted or existing; 503 if market not ready; 409 if pending/conflict.
 4. Poll `GET /api/state` until pending clears after ~60s+ (needs real feed + workers).
 5. `GET /api/rounds` — completed round shows start/settlement evidence and `score_delta`.
 
