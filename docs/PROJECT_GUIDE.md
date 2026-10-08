@@ -1,6 +1,8 @@
-# Onboarding to Minute / BTC
+# Minute / BTC project guide
 
-This guide is for two engineers joining the project. Start with the player experience, then follow one round through the system. Use the [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) to discuss the diagrams; use this guide to find the code and run it. The board covers architecture, the round lifecycle, recovery, and decisions tied to failure cases and tests. Edit the diagrams directly in tldraw.
+This guide explains the product, architecture, correctness rules, and code layout for humans and coding agents working on the project. Use the [README](../README.md) for setup and deployment instructions. Coding agents should also read [AGENTS.md](../AGENTS.md) and the relevant repository skills before making changes.
+
+The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) illustrates the architecture, round lifecycle, recovery, and engineering decisions. Edit the diagrams directly in tldraw.
 
 ## What we are building
 
@@ -8,7 +10,7 @@ A player predicts whether Coinbase's BTC-USD price will go higher or lower after
 
 Our product priority is **a result the player can trust and understand**. A responsive screen, recent price context, clear waiting states, and personal round history support that priority. This is a points game, not a money-backed product.
 
-We explored a global scoreboard and removed it. Anonymous browser identities made competition easy to manipulate, and ranking added work to the frequently polled state request. Personal history offers more direct value: players can understand their own decisions and inspect their results.
+Personal round history helps players understand their decisions and inspect results. A global leaderboard is outside the current scope: anonymous browser identities do not provide a reliable basis for competitive ranking.
 
 ### The rules we must preserve
 
@@ -16,35 +18,11 @@ We explored a global scoreboard and removed it. Anonymous browser identities mad
 2. A resolved round changes the score exactly once, even under retries or restart.
 3. A result uses verified market history; a later observed price cannot stand in for missing earlier trades.
 
-The server freezes direction and acceptance time. It waits for verified coverage to pass acceptance, then locks the last trade at or before that time as the starting price. The deadline is acceptance + 60 seconds. The earliest trade at or after that deadline with a different price decides the result; equal prices leave it pending. Ordering uses canonical REST exchange timestamps, then trade ID. Prices are exact decimals and timestamps retain microseconds.
-
-The starting price comes from **verified history at server acceptance**, not the potentially stale display price or a browser-supplied click time. The UI shows “Locking price…” until that evidence is complete; the direction and deadline already apply. There is one rule for all rounds. Admission requires fresh heartbeat, verification, and price data within five seconds. The browser's countdown is feedback, not the settlement clock.
+The [README's rules](../README.md#rules-and-fairness) define acceptance, deferred starting-price locking, and settlement. The browser displays the server's decisions; its price and countdown never determine a result.
 
 ## Start here
 
-Follow [the README's local setup](../README.md#run-locally).
-
-```sh
-pnpm install
-cp .env.example .env
-docker compose up -d db
-pnpm dev
-```
-
-Open http://localhost:5173. Use a real round to demonstrate submitting, waiting, resolution, and the trade evidence. Open a second tab while a round is pending. Refresh and return to show continuity. A real round takes at least one minute; demonstrate the rest of the system while it runs.
-
-Run the checks separately:
-
-```sh
-pnpm build
-pnpm test
-docker compose exec -T db createdb -U btc btc_test # once
-pnpm test:integration
-pnpm exec playwright install chromium # once
-pnpm test:e2e
-```
-
-Integration tests reset only `btc_test`. Browser tests use isolated API fixtures: they demonstrate UI behavior, not live-provider correctness. [Live verification evidence](../test/live-verification.json) records a successful real round checked against the persisted trade ledger while a local backend restart was requested. You can reproduce that explicit check with `pnpm verify:live -- --restart` while watch-mode development is running.
+Use the README for [local setup](../README.md#run-locally), [verification](../README.md#verification), and [AWS deployment](../README.md#deploy-to-aws-sst-v4). Complete a round, open a second tab while pending, and refresh to check continuity. The browser tests use API fixtures; real Coinbase recovery requires the separate live check described in the README.
 
 ## Follow one round
 
@@ -68,7 +46,7 @@ Integration tests reset only `btc_test`. Browser tests use isolated API fixtures
 | Feed and recovery           | [workers.ts](../server/src/workers.ts), [recovery.ts](../server/src/recovery.ts)                 | Leadership, connection generations, coverage verification, and provider pagination.                       |
 | Persistence lifecycle       | [db.ts](../server/src/db.ts), [migrations](../server/migrations)                                 | Checksum-recorded migrations, transactions, schema constraints, and indexes.                              |
 
-The `players` table owns identity and score. `guesses` owns the round and its result evidence. `trades` stores canonical price/time and optional original WebSocket time. `market` stores verified coverage, checkpoint, latest trade, and feed health. `schema_migrations` records applied migrations. The challenge uses one consolidated baseline. Older demo databases require the [documented reset](../README.md#reset-disposable-demo-data). Future changes add migrations rather than editing an applied baseline.
+The `players` table owns identity and score. `guesses` owns the round and its result evidence. `trades` stores canonical price/time and optional original WebSocket time. `market` stores verified coverage, checkpoint, latest trade, and feed health. `schema_migrations` records applied migrations. Add migrations for schema changes; do not edit an applied migration. See the README for [disposable database resets](../README.md#reset-disposable-demo-data).
 
 ## Failure behavior is part of the product
 
@@ -86,7 +64,7 @@ The `players` table owns identity and score. `guesses` owns the round and its re
 
 Previously verified historical rounds can still settle while the current feed is disconnected. “Feed unhealthy” does not invalidate evidence we already persisted and verified.
 
-## Decisions to understand, not just repeat
+## Engineering decisions
 
 - **Continuously running Node service:** a natural home for the exchange connection and workers. PostgreSQL session advisory locks prevent competing leaders during overlap. This supports recovery, not a claim of high availability.
 - **Deferred starting price:** a fast external feed could exploit a stale verified snapshot as the starting reference. Lock intent first, then establish the historical acceptance trade after verification. This adds a visible locking state while keeping the deadline fixed. Server/exchange UTC clocks must be aligned.
@@ -98,28 +76,20 @@ Previously verified historical rounds can still settle while the current feed is
 
 ## Known limits and next priorities
 
-Local application behavior is implemented and checked.
+The demo is deployed over HTTP. It uses cryptographic browser-generated idempotency keys that work in this environment, but the session cookie cannot have the Secure flag until HTTPS is configured. HTTPS remains a deployment priority.
 
-Before public hosting, tighten `trustProxy`, validate security configuration at startup, strengthen session-creation limits, and separate runtime database privileges from migrations. The current in-memory rate limiter is per process. These are known gaps, not protections we claim already exist.
+The original recovery request used a newer-direction cursor at the live edge, which intermittently returned empty pages. Live checks also showed WebSocket trades arriving before REST publication, with incomplete responses cached by the provider. Recovery now lets the target age one second, starts with an older-direction cursor above it, and follows provider cursors back to the checkpoint. Missing evidence still blocks admission; diagnostics include the target and empty-page context. The five-second freshness gate can also block admission when no new trade arrives despite a healthy connection.
+
+Security priorities include tightening `trustProxy`, validating security configuration at startup, strengthening session-creation limits, and separating runtime database privileges from migrations. The current in-memory rate limiter is per process. These are known gaps, not protections we claim already exist.
 
 Before longer operation, establish ledger retention that preserves pending-round coverage and result evidence. Before greater traffic, measure state/history query latency and provider verification lag, then optimize against those measurements. Do not add caching that weakens result correctness without an explicit consistency policy.
 
-## First contributions for the two engineers
+## Making changes
 
-**Engineer A — player feedback and history continuity.** Preserve already loaded older rounds when a newly resolved round arrives, and improve offline/retry feedback. Acceptance: no duplicates, newest-first order, older rows stay visible, failure does not hide known results, and keyboard/mobile flows work. Start in `round-history.tsx`; agree on the history contract before changing the API.
+Start with the relevant area in the code map, then trace the behavior through its public contract, database operations, and tests. Keep prices, acceptance time, settlement, and score server-owned. Preserve the three invariants above when changing game behavior.
 
-**Engineer B — HTTP boundary hardening.** Replace blanket proxy trust with an explicit deployment-aware policy and validate required production security settings on startup. Acceptance: forged forwarding headers cannot change the client identity outside the configured trusted chain; invalid production configuration fails clearly; local development remains usable. Start in `app.ts`; add focused request-level tests.
+For UI changes, check loading, pending, recovery, offline, empty, and error states as applicable, including keyboard and mobile use. Browser fixtures verify the UI contract; they do not prove exchange-data correctness.
 
-Both engineers review the three invariants and run the relevant tests before merging. Changes to public types or settlement semantics should be discussed together; UI-only changes should not touch scoring.
+For ingestion or settlement changes, test missing and out-of-order events, reconnects, retries, and transaction failures. Never fill a coverage gap by selecting a later observed price. Review the repository's [settlement-fairness skill](../.agents/skills/settlement-fairness/SKILL.md) for the detailed guardrails.
 
-## Suggested interview walkthrough (20 minutes)
-
-| Time      | Discussion                                                                                                                                    |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0–3 min   | Ask what each engineer knows, explain the player job, and start a real round.                                                                 |
-| 3–7 min   | Use the product and architecture diagrams. Ask who owns the score and what happens when the browser closes.                                   |
-| 7–12 min  | Trace acceptance, verified coverage, and atomic settlement. Invite predictions about retries and missing trades.                              |
-| 12–16 min | Show the live result/evidence and one meaningful recovery or concurrency test. Distinguish live checks from fixtures.                         |
-| 16–20 min | Explain one deliberate tradeoff, assign the first contributions, and ask each engineer to summarize their change and its acceptance criteria. |
-
-Use the guide as a reference, not a script. Leave room for questions and let the engineers reason about a failure before revealing the implementation. Ownership shows in clear priorities, honest limits, and making their first contribution safe.
+Run `pnpm verify` before completing a change. Add the relevant PostgreSQL integration or browser checks when the behavior crosses those boundaries, and record what was checked and any remaining limitations. Deployment and database resets are separate operations; consult the README and the requested scope before running them.

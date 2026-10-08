@@ -46,7 +46,7 @@ export async function collect(
   current: () => boolean,
   options: {
     socketUrl?: string;
-    fetchPage?: (after?: string, before?: string) => Promise<Page>;
+    fetchPage?: (after?: string) => Promise<Page>;
   } = {},
 ) {
   let socket: WebSocket | undefined,
@@ -156,17 +156,23 @@ export async function collect(
       recoveryTarget ??= hb;
       const target = recoveryTarget;
       try {
+        // WS can lead REST publication; querying immediately can cache an incomplete
+        // page. Let the fixed heartbeat target age before its first REST lookup.
+        const publicationWait =
+          1000 - (Date.now() - target.receivedAt.getTime());
+        if (publicationWait > 0) await delay(publicationWait);
         const {
           rows: [m],
         } = await c.query("SELECT checkpoint_id FROM market WHERE product=$1", [
           PRODUCT,
         ]);
-        // Anchor the first REST page to a supported numeric cursor immediately below the target.
-        // This includes the target without assuming adjacent IDs correspond to trades, and
-        // avoids the five-second cache on the unqualified latest-history URL.
-        const before = (BigInt(target.id) - 1n).toString();
+        // `after` requests older trades. A numeric bound above the target includes
+        // the target and preceding history without assuming adjacent trade IDs exist.
+        // Subsequent pages use Coinbase's returned cursor, not arithmetic.
+        const initialAfter = (BigInt(target.id) + 1n).toString();
         const trades = await recoverInterval(
-          (after) => (options.fetchPage ?? fetchCoinbasePage)(after, before),
+          (after) =>
+            (options.fetchPage ?? fetchCoinbasePage)(after ?? initialAfter),
           m.checkpoint_id,
           target.id,
           buffer,
@@ -190,7 +196,10 @@ export async function collect(
         recoveryTarget = null;
       } catch (e) {
         if (!current()) throw e;
-        log("recovery_failed", { error: (e as Error).message });
+        log("recovery_failed", {
+          target: target.id,
+          error: (e as Error).message,
+        });
         await c.query(
           "UPDATE market SET status='error',error=$2 WHERE product=$1",
           [PRODUCT, (e as Error).message],

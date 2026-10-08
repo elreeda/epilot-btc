@@ -2,25 +2,6 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
 
-function credentialsFromEnv() {
-  if (process.env.DB_PASSWORD || process.env.DB_USER || process.env.DB_NAME) {
-    return {
-      username: process.env.DB_USER ?? "postgres",
-      password: process.env.DB_PASSWORD ?? "",
-      database: process.env.DB_NAME ?? "btc",
-    };
-  }
-  const secret = JSON.parse(process.env.DB_SECRET ?? "{}") as {
-    username?: string;
-    password?: string;
-  };
-  return {
-    username: secret.username,
-    password: secret.password,
-    database: "btc",
-  };
-}
-
 export function createPool(connectionString = process.env.DATABASE_URL) {
   if (connectionString)
     return new pg.Pool({
@@ -28,7 +9,9 @@ export function createPool(connectionString = process.env.DATABASE_URL) {
       max: 10,
       connectionTimeoutMillis: 5000,
     });
-  const { username, password, database } = credentialsFromEnv();
+  const username = process.env.DB_USER,
+    password = process.env.DB_PASSWORD,
+    database = process.env.DB_NAME ?? "btc";
   if (!process.env.DB_HOST || !username || !password)
     throw new Error(
       "Database config missing: set DATABASE_URL or DB_HOST + credentials",

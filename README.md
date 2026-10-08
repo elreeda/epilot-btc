@@ -4,9 +4,9 @@ A one-minute BTC-USD prediction game. Players choose higher or lower, receive +1
 
 Live demo: [Minute / BTC](http://ApiLoadBalancer-zsecstnd-701550995.eu-central-1.elb.amazonaws.com/).
 
-## Engineer onboarding
+## Project guide
 
-Use the [onboarding guide](docs/ONBOARDING.md) for local setup, the code map, failure behavior, and first contributions. The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) explains architecture, settlement, recovery, and engineering decisions. Edit the diagrams directly in tldraw.
+Use the [project guide](docs/PROJECT_GUIDE.md) for product context, architecture, the code map, failure behavior, and guidance for making changes. The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) explains architecture, settlement, recovery, and engineering decisions. Edit the diagrams directly in tldraw.
 
 Agent instructions and the verification gate live in [AGENTS.md](AGENTS.md).
 
@@ -27,7 +27,7 @@ Alternatively, `docker compose up --build` starts the database and backend. Star
 
 ### Reset disposable demo data
 
-The challenge schema is consolidated into `server/migrations/001_initial.sql`. Databases created from the earlier migration set need a one-time reset, including `schema_migrations`. Stop the backend first. This removes all players, rounds, prices, and checkpoints.
+Stop the backend before resetting a disposable database. This removes all players, rounds, prices, checkpoints, and migration records.
 
 For the local Docker database:
 
@@ -36,7 +36,7 @@ docker compose exec -T db psql -U btc -d btc -v ON_ERROR_STOP=1 -c 'DROP SCHEMA 
 pnpm dev
 ```
 
-The backend recreates the schema on startup. For an existing deployed demo, stop its backend and run the same SQL against that demo database before starting the new build. Redeploying alone will not reset migration checksums. Future schema changes should add migrations rather than edit this baseline.
+The backend recreates the schema on startup. For an existing deployed demo, stop its backend and run the same SQL against that demo database before starting the new build. Redeploying does not reset data. Add new migrations for future schema changes; do not edit an applied migration.
 
 ## Rules and fairness
 
@@ -66,7 +66,7 @@ React/Vite serves a responsive single screen. Fastify owns the HTTP API. A conti
 - Subscribe to `matches` and `heartbeat`. `last_match` is historical context, not proof of uninterrupted coverage.
 - Keep a bounded WebSocket buffer and compare its IDs/prices with paginated REST history. REST timestamps are canonical for settlement: a live check showed occasional one-microsecond differences across the two transports. Preserve the original WebSocket timestamp separately as `ws_time_us`; never round the canonical timestamp. Persist a complete verified interval and its checkpoint together in one transaction.
 - On each advancing heartbeat, reconcile REST history from the saved checkpoint through the heartbeat's `last_trade_id`. This conservative implementation verifies intervals through REST even while connected: it does **not** assume trade IDs are consecutive or that a heartbeat's last ID proves all intervening messages arrived. WebSocket supplies live trades and the boundary used for verification. This is intentionally more REST-intensive than an optimized streaming ingestion system.
-- Anchor the initial REST page with the supported `before` cursor immediately below the target trade ID, then use the provider's `CB-AFTER` header to retrieve older pages. This avoids chasing the cached unqualified latest-page response. Retain the same heartbeat target while retrying. Reach the exact saved checkpoint before advancing. Merge duplicates and fail closed on conflicting data or timestamp regression.
+- Anchor the initial REST page with an `after` cursor immediately above the target trade ID, including that trade and preceding history. Continue with the provider's `CB-AFTER` header. The numeric bound does not assume adjacent IDs are actual trades. This avoids the newer-direction live-edge page, which can be empty, and the cached unqualified latest-page response. Let each heartbeat target age one second before its first REST lookup: WebSocket trades can precede REST publication, and an early incomplete response can be cached by the provider. Retain the same heartbeat target while retrying. Reach the exact saved checkpoint before advancing. Merge duplicates and fail closed on conflicting data or timestamp regression.
 - Initial startup anchors at the current heartbeat trade; no rounds can exist before initial verification. Subsequent startup resumes the persisted checkpoint, including outstanding rounds.
 - On disconnect or five seconds without heartbeat, invalidate the connection generation and block admission. Reconnect with exponential backoff/jitter, buffer live trades, and replay history before advancing coverage.
 - Settlement reads only trades inside verified coverage. A disconnected feed can still settle historical rounds whose complete evidence was already verified. A missing interval cannot be replaced by a later trade.
@@ -97,9 +97,7 @@ Errors: 400 invalid input, 401 no valid session, 403 disallowed write origin, 40
 ## Verification
 
 ```sh
-pnpm build
-pnpm test
-pnpm lint
+pnpm verify
 docker compose exec -T db createdb -U btc btc_test
 pnpm test:integration
 pnpm exec playwright install chromium
@@ -108,21 +106,13 @@ pnpm test:e2e
 
 The `createdb` step is needed once. Integration tests destructively reset **only** `btc_test`; never point `TEST_DATABASE_URL` at a real database. Unit tests cover precise rule boundaries and pagination/failure cases. Integration tests exercise real PostgreSQL transactions and API behavior. Browser tests use clearly isolated API fixtures to verify UI states, refresh, tabs, keyboard controls, and mobile layout; they do not claim live Coinbase end-to-end coverage. Live provider validation is a separate explicit check: `pnpm verify:live -- --restart` creates one local points-only round and restarts the watch-mode backend during it. Run it only with `pnpm dev` active. The latest successful evidence is saved in [test/live-verification.json](test/live-verification.json).
 
-
 ## Deploy to AWS (SST v4)
 
-This app is **not** a good fit for API-Gateway + Lambda alone. The process keeps:
-
-- a long-lived Coinbase Exchange WebSocket (`matches` + `heartbeat`)
-- REST recovery / verification loops
-- a settlement worker on a 1s tick
-- PostgreSQL session advisory locks for single-leader collection and settlement
-
-Those need always-on compute and a real Postgres. The SST stack therefore provisions:
+SST defines and deploys the AWS infrastructure in TypeScript. An always-running Fargate service hosts the API, Coinbase connection, recovery loop, settlement worker, and frontend. PostgreSQL stores rounds and verified trades.
 
 | Piece | SST component | Why |
 | --- | --- | --- |
-| Network + cheap NAT | `sst.aws.Vpc` (`nat: "ec2"`) | Private Fargate/RDS with outbound access to Coinbase |
+| Network + cheap NAT | `sst.aws.Vpc` (`nat: "ec2"`) | Network isolation and outbound access to Coinbase |
 | Database | `sst.aws.Postgres` (RDS 17, `t4g.micro`) | Durable ledger, locks, migrations |
 | API + workers + SPA | `sst.aws.Service` on ECS Fargate (ARM) | Runs the existing Dockerfile (Fastify + workers; serves `web/dist`) |
 | Public HTTP | Application Load Balancer on the service | `/healthz` health checks; same-origin `/api` + UI |
@@ -145,8 +135,6 @@ aws sts get-caller-identity
 pnpm build          # produces web/dist used by the image
 pnpm deploy         # → sst deploy --stage reda
 ```
-
-Reset an older demo schema as described above before deploying the consolidated baseline.
 
 After deploy, SST prints the ALB `url`. Open it, complete a real 60s round, refresh to check persistence, and confirm `/healthz`. The browser creates cryptographically random UUID idempotency keys using `getRandomValues()`, which works on HTTP.
 

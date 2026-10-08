@@ -1,16 +1,12 @@
 import { comparePrice, normalizeTrade, type Trade } from "./domain.js";
 export type Page = { trades: Trade[]; after: string | null };
 export type FetchPage = (after?: string) => Promise<Page>;
-export async function fetchCoinbasePage(
-  after?: string,
-  before?: string,
-): Promise<Page> {
+export async function fetchCoinbasePage(after?: string): Promise<Page> {
   const url = new URL(
     "https://api.exchange.coinbase.com/products/BTC-USD/trades",
   );
   url.searchParams.set("limit", "1000");
   if (after) url.searchParams.set("after", after);
-  else if (before) url.searchParams.set("before", before);
   const res = await fetch(url, {
     headers: { "User-Agent": "BTC-Minute/1.0" },
     signal: AbortSignal.timeout(10000),
@@ -62,7 +58,9 @@ export async function recoverInterval(
     if (!isCurrent()) throw new Error("Recovery generation changed");
     const page = await fetchPage(after);
     if (!page.trades.length)
-      throw new Error("Trade history unavailable before checkpoint");
+      throw new Error(
+        `Trade history unavailable before checkpoint: page=${pageNumber + 1}, cursor=${after ?? "initial"}, checkpoint=${checkpoint ?? "initial"}, target=${target}`,
+      );
     collected.push(...page.trades);
     targetFound ||= page.trades.some((t) => t.id === target);
     found = checkpoint

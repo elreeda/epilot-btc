@@ -520,11 +520,9 @@ describe("transactional game state", () => {
       NODE_ENV: process.env.NODE_ENV,
       COOKIE_SECURE: process.env.COOKIE_SECURE,
       APP_ORIGIN: process.env.APP_ORIGIN,
-      ORIGIN_SECRET: process.env.ORIGIN_SECRET,
     };
     process.env.NODE_ENV = "production";
     process.env.COOKIE_SECURE = "false";
-    delete process.env.ORIGIN_SECRET;
     delete process.env.APP_ORIGIN;
     const app = await buildApp(pool);
     const headers = {
@@ -605,6 +603,7 @@ describe("transactional game state", () => {
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const port = (server.address() as { port: number }).port;
     const timers: ReturnType<typeof setInterval>[] = [];
+    let firstHeartbeatSentAt = 0;
     server.on("connection", (socket) => {
       socket.send(
         JSON.stringify({
@@ -615,7 +614,8 @@ describe("transactional game state", () => {
           price: "101",
         }),
       );
-      const heartbeat = () =>
+      const heartbeat = () => {
+        firstHeartbeatSentAt ||= Date.now();
         socket.send(
           JSON.stringify({
             type: "heartbeat",
@@ -624,6 +624,7 @@ describe("transactional game state", () => {
             time: isoUs(BigInt(Date.now()) * 1000n),
           }),
         );
+      };
       heartbeat();
       const timer = setInterval(heartbeat, 100);
       timers.push(timer);
@@ -631,16 +632,29 @@ describe("transactional game state", () => {
     });
     const c = await pool.connect();
     let running = true;
+    const requestedCursors: (string | undefined)[] = [];
     const task = collect(c, () => running, {
       socketUrl: `ws://127.0.0.1:${port}`,
-      fetchPage: async () => ({
-        trades: [
-          { id: "3", timeUs: now, price: "101" },
-          { id: "2", timeUs: now - 500000n, price: "99" },
-          { id: "1", timeUs: now - 61000000n, price: "100" },
-        ],
-        after: null,
-      }),
+      fetchPage: async (after) => {
+        expect(Date.now() - firstHeartbeatSentAt).toBeGreaterThanOrEqual(1000);
+        requestedCursors.push(after);
+        // Newer-direction queries would be empty at the live edge. The first
+        // older page includes the target; its provider cursor retrieves the gap.
+        if (after === "4")
+          return {
+            trades: [{ id: "3", timeUs: now, price: "101" }],
+            after: "3",
+          };
+        if (after === "3")
+          return {
+            trades: [
+              { id: "2", timeUs: now - 500000n, price: "99" },
+              { id: "1", timeUs: now - 61000000n, price: "100" },
+            ],
+            after: null,
+          };
+        return { trades: [], after: null };
+      },
     });
     // The fixture's baseline was at acceptance, while this historical round was backdated.
     // Ensure the checkpoint timestamp precedes the recovered trades, as on the real exchange.
@@ -660,6 +674,7 @@ describe("transactional game state", () => {
         (await pool.query("SELECT checkpoint_id FROM market")).rows[0]
           .checkpoint_id,
       ).toBe("3");
+      expect(requestedCursors).toEqual(["4", "3"]);
       running = false;
       await task;
       await settle(c, () => true);

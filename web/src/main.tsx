@@ -10,7 +10,10 @@ function errorStatus(error: unknown): number | undefined {
 
 import { createRoot } from "react-dom/client";
 import "./style.css";
-import type { GameState as State } from "../../server/src/contracts.js";
+import type {
+  GameState as State,
+  SubmitGuess,
+} from "../../server/src/contracts.js";
 import { createIdempotencyKey } from "./idempotency-key.js";
 import { PriceChart } from "./price-chart.js";
 import { RoundHistory } from "./round-history.js";
@@ -48,10 +51,7 @@ function App() {
     sessionReady = useRef(false),
     inflight = useRef(false);
   // Retain the key after an ambiguous network failure; retrying must not create a new round.
-  const pendingRequest = useRef<{
-    direction: "up" | "down";
-    idempotencyKey: string;
-  } | null>(null);
+  const pendingRequest = useRef<SubmitGuess | null>(null);
   async function refresh() {
     if (inflight.current) return;
     inflight.current = true;

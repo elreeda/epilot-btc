@@ -26,4 +26,4 @@ See [`scripts/verify.sh`](scripts/verify.sh) and the `verify-btc-guess` skill. O
 
 ## Humans
 
-Local setup and architecture: [README](README.md) → Engineer onboarding and [docs/ONBOARDING.md](docs/ONBOARDING.md).
+Setup and deployment: [README](README.md). Product, architecture, and change guidance for humans and agents: [project guide](docs/PROJECT_GUIDE.md).

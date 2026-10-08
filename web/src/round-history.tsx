@@ -97,7 +97,7 @@ export function RoundHistory({
                 <span className="round-prices">
                   {money(round.startingTrade.price)}
                   <span>→</span>
-                  {money(round.settlementTrade!.price)}
+                  {money(round.settlementTrade.price)}
                 </span>
                 <span
                   className={`round-points ${round.scoreDelta === 1 ? "won" : "lost"}`}
@@ -119,8 +119,8 @@ export function RoundHistory({
                   <strong>{round.deadline}</strong>
                 </p>
                 <p>
-                  <span>Settlement trade #{round.settlementTrade!.id}</span>
-                  <strong>{round.settlementTrade!.time}</strong>
+                  <span>Settlement trade #{round.settlementTrade.id}</span>
+                  <strong>{round.settlementTrade.time}</strong>
                 </p>
                 <p className="history-rule">
                   First differing trade at or after the deadline

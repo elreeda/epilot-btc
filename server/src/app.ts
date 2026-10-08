@@ -27,11 +27,7 @@ function sameHostOrigin(origin: string | undefined, host: string | undefined) {
 export async function buildApp(pool: pg.Pool) {
   const app = Fastify({
     logger: {
-      redact: [
-        "req.headers.cookie",
-        "req.headers.authorization",
-        "req.headers.x-origin-secret",
-      ],
+      redact: ["req.headers.cookie", "req.headers.authorization"],
     },
     trustProxy: true,
     bodyLimit: 4096,
@@ -42,12 +38,6 @@ export async function buildApp(pool: pg.Pool) {
     reply
       .header("Cache-Control", "no-store")
       .header("X-Content-Type-Options", "nosniff");
-    if (
-      process.env.ORIGIN_SECRET &&
-      req.headers["x-origin-secret"] !== process.env.ORIGIN_SECRET &&
-      req.url !== "/healthz"
-    )
-      throw new HttpError(403, "Forbidden");
     if (req.method === "POST") {
       const origin = req.headers.origin;
       const expected = process.env.APP_ORIGIN;

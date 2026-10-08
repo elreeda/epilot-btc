@@ -52,7 +52,7 @@ export function comparePrice(a: string, b: string): number {
     bv = BigInt(bi + bf.padEnd(digits, "0"));
   return av === bv ? 0 : av > bv ? 1 : -1;
 }
-export function orderTrades(a: Trade, b: Trade): number {
+function orderTrades(a: Trade, b: Trade): number {
   if (a.timeUs !== b.timeUs) return a.timeUs < b.timeUs ? -1 : 1;
   return BigInt(a.id) === BigInt(b.id)
     ? 0

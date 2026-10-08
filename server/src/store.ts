@@ -10,7 +10,8 @@ import {
   scoreDelta,
   type Trade,
 } from "./domain.js";
-export const tokenHash = (token: string) =>
+
+const tokenHash = (token: string) =>
   createHash("sha256").update(token).digest("hex");
 export async function session(pool: pg.Pool, token?: string) {
   if (token) {
@@ -40,7 +41,7 @@ export async function playerFor(
   if (!rows[0]) throw new HttpError(401, "Your session has expired.");
   return rows[0].id;
 }
-export interface GuessRecord {
+interface GuessRecord {
   id: string;
   player_id: string;
   idempotency_key: string;
@@ -56,7 +57,7 @@ export interface GuessRecord {
   settlement_price: string | null;
   score_delta: number | null;
 }
-export function publicGuess(row: GuessRecord | undefined): Guess | null {
+function publicGuess(row: GuessRecord | undefined): Guess | null {
   if (!row) return null;
   return {
     id: row.id,
