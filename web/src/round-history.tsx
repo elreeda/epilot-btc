@@ -123,8 +123,7 @@ export function RoundHistory({
                   <strong>{round.settlementTrade!.time}</strong>
                 </p>
                 <p className="history-rule">
-                  First differing trade at or after the deadline ·{" "}
-                  {round.ruleVersion}
+                  First differing trade at or after the deadline
                 </p>
               </div>
             </details>

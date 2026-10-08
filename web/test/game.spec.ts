@@ -54,7 +54,6 @@ async function fixture(context: BrowserContext, locking = false) {
         startingTrade: locking ? null : trade,
         settlementTrade: null,
         scoreDelta: null,
-        ruleVersion: "verified-acceptance-first-differing-v2",
       };
       return route.fulfill({ status: 201, json: state.activeGuess });
     }
@@ -190,4 +189,56 @@ test("locking price survives refresh and recovery without resetting the deadline
   ).toBeVisible();
   expect(f.state.activeGuess.deadline).toBe(deadline);
   expect(f.submissions).toBe(1);
+});
+
+test("submits without randomUUID and reuses the key after a lost response", async ({
+  page,
+  context,
+}) => {
+  await context.addInitScript(() => {
+    Object.defineProperty(crypto, "randomUUID", { value: undefined });
+  });
+  const f = await fixture(context);
+  const keys: string[] = [];
+  await context.route("**/api/guesses", async (route) => {
+    keys.push(route.request().postDataJSON().idempotencyKey);
+    if (keys.length === 1) return route.abort("failed");
+    return route.fallback();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Higher" }).click();
+  await expect(
+    page.getByRole("button", { name: "Retry the same call" }),
+  ).toBeEnabled();
+  await expect(page.getByText("Submitting your call…")).toHaveCount(0);
+  await page.getByRole("button", { name: "Retry the same call" }).click();
+  await expect(page.getByText("Your call is in.")).toBeVisible();
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+  expect(keys[1]).toBe(keys[0]);
+  expect(f.submissions).toBe(1);
+});
+
+test("random byte generation failure releases submitting controls", async ({
+  page,
+  context,
+}) => {
+  await context.addInitScript(() => {
+    Object.defineProperty(crypto, "getRandomValues", {
+      value: () => {
+        throw new Error("Random generator unavailable.");
+      },
+    });
+  });
+  const f = await fixture(context);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Higher" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Random generator unavailable.",
+  );
+  await expect(page.getByText("Submitting your call…")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Higher" })).toBeEnabled();
+  expect(f.submissions).toBe(0);
 });

@@ -7,7 +7,6 @@ import {
   HttpError,
   isoUs,
   PRODUCT,
-  RULE,
   scoreDelta,
   type Trade,
 } from "./domain.js";
@@ -52,7 +51,6 @@ export interface GuessRecord {
   start_trade_id: string | null;
   start_time_us: string | null;
   start_price: string | null;
-  rule_version: string;
   settlement_trade_id: string | null;
   settlement_time_us: string | null;
   settlement_price: string | null;
@@ -74,7 +72,6 @@ export function publicGuess(row: GuessRecord | undefined): Guess | null {
             price: row.start_price!,
           }
         : null,
-    ruleVersion: row.rule_version,
     settlementTrade: row.settlement_trade_id
       ? {
           id: row.settlement_trade_id,
@@ -234,8 +231,8 @@ export async function submitGuess(
     const {
       rows: [guess],
     } = await c.query(
-      `INSERT INTO guesses(id,player_id,idempotency_key,direction,submitted_us,deadline_us,rule_version)
-      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      `INSERT INTO guesses(id,player_id,idempotency_key,direction,submitted_us,deadline_us)
+      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [
         randomUUID(),
         playerId,
@@ -243,7 +240,6 @@ export async function submitGuess(
         direction,
         submitted.toString(),
         (submitted + 60000000n).toString(),
-        RULE,
       ],
     );
     return publicGuess(guess);

@@ -1,6 +1,6 @@
 # Onboarding to Minute / BTC
 
-This guide is for two engineers joining the project. Start with the player experience, then follow one round through the system. Use the [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) to discuss the diagrams; use this guide to find the code and run it. The board covers architecture, the round lifecycle, recovery, and decisions tied to failure cases and tests. Edit the diagrams directly in tldraw. The [exported `.tldr` snapshot](presentation/engineer-architecture.tldr) remains as a portable backup. Its acceptance diagram predates deferred price locking; use the rule and flow below for the current behavior.
+This guide is for two engineers joining the project. Start with the player experience, then follow one round through the system. Use the [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) to discuss the diagrams; use this guide to find the code and run it. The board covers architecture, the round lifecycle, recovery, and decisions tied to failure cases and tests. Edit the diagrams directly in tldraw.
 
 ## What we are building
 
@@ -18,7 +18,7 @@ We explored a global scoreboard and removed it. Anonymous browser identities mad
 
 The server freezes direction and acceptance time. It waits for verified coverage to pass acceptance, then locks the last trade at or before that time as the starting price. The deadline is acceptance + 60 seconds. The earliest trade at or after that deadline with a different price decides the result; equal prices leave it pending. Ordering uses canonical REST exchange timestamps, then trade ID. Prices are exact decimals and timestamps retain microseconds.
 
-The starting price comes from **verified history at server acceptance**, not the potentially stale display price or a browser-supplied click time. The UI shows “Locking price…” until that evidence is complete; the direction and deadline already apply. New rounds use `verified-acceptance-first-differing-v2`; existing v1 rounds keep their original evidence. Admission requires fresh heartbeat, verification, and price data within five seconds. The browser's countdown is feedback, not the settlement clock.
+The starting price comes from **verified history at server acceptance**, not the potentially stale display price or a browser-supplied click time. The UI shows “Locking price…” until that evidence is complete; the direction and deadline already apply. There is one rule for all rounds. Admission requires fresh heartbeat, verification, and price data within five seconds. The browser's countdown is feedback, not the settlement clock.
 
 ## Start here
 
@@ -68,7 +68,7 @@ Integration tests reset only `btc_test`. Browser tests use isolated API fixtures
 | Feed and recovery           | [workers.ts](../server/src/workers.ts), [recovery.ts](../server/src/recovery.ts)                 | Leadership, connection generations, coverage verification, and provider pagination.                       |
 | Persistence lifecycle       | [db.ts](../server/src/db.ts), [migrations](../server/migrations)                                 | Checksum-recorded migrations, transactions, schema constraints, and indexes.                              |
 
-The `players` table owns identity and score. `guesses` owns the round and its result evidence. `trades` stores canonical price/time and optional original WebSocket time. `market` stores verified coverage, checkpoint, latest trade, and feed health. `schema_migrations` records applied migrations. Add a migration rather than editing one already applied.
+The `players` table owns identity and score. `guesses` owns the round and its result evidence. `trades` stores canonical price/time and optional original WebSocket time. `market` stores verified coverage, checkpoint, latest trade, and feed health. `schema_migrations` records applied migrations. The challenge uses one consolidated baseline. Older demo databases require the [documented reset](../README.md#reset-disposable-demo-data). Future changes add migrations rather than editing an applied baseline.
 
 ## Failure behavior is part of the product
 

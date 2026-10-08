@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS trades (
   product text NOT NULL CHECK (product = 'BTC-USD'),
   trade_id bigint NOT NULL,
   time_us bigint NOT NULL,
+  -- REST time is canonical; retain the original WebSocket observation.
+  ws_time_us bigint,
   price numeric NOT NULL CHECK (price > 0),
   PRIMARY KEY (product, trade_id)
 );
@@ -30,10 +32,9 @@ CREATE TABLE IF NOT EXISTS guesses (
   direction text NOT NULL CHECK (direction IN ('up','down')),
   submitted_us bigint NOT NULL,
   deadline_us bigint NOT NULL CHECK (deadline_us = submitted_us + 60000000),
-  start_trade_id bigint NOT NULL,
-  start_time_us bigint NOT NULL,
-  start_price numeric NOT NULL,
-  rule_version text NOT NULL DEFAULT 'first-differing-trade-v1',
+  start_trade_id bigint,
+  start_time_us bigint,
+  start_price numeric,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','resolved')),
   settlement_trade_id bigint,
   settlement_time_us bigint,
@@ -41,9 +42,16 @@ CREATE TABLE IF NOT EXISTS guesses (
   score_delta integer CHECK (score_delta IN (-1,1)),
   resolved_at timestamptz,
   UNIQUE(player_id, idempotency_key),
+  CONSTRAINT complete_start_evidence CHECK (
+    (start_trade_id IS NOT NULL AND start_time_us IS NOT NULL AND start_price IS NOT NULL)
+    OR (start_trade_id IS NULL AND start_time_us IS NULL AND start_price IS NULL AND status='pending')
+  ),
+  CONSTRAINT acceptance_start_time CHECK (start_time_us<=submitted_us),
   CHECK ((status = 'pending' AND settlement_trade_id IS NULL AND score_delta IS NULL)
       OR (status = 'resolved' AND settlement_trade_id IS NOT NULL AND settlement_time_us IS NOT NULL AND settlement_price IS NOT NULL AND score_delta IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_pending_guess ON guesses(player_id) WHERE status='pending';
 CREATE INDEX IF NOT EXISTS pending_deadlines ON guesses(deadline_us) WHERE status='pending';
 CREATE INDEX IF NOT EXISTS player_history ON guesses(player_id, submitted_us DESC);
+
+CREATE INDEX IF NOT EXISTS locking_guesses ON guesses(submitted_us) WHERE status='pending' AND start_trade_id IS NULL;

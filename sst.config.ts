@@ -10,7 +10,7 @@
  * starts, 15-minute limits). SST therefore deploys:
  *   - RDS Postgres (sst.aws.Postgres)
  *   - ECS Fargate service (sst.aws.Service) running the existing Dockerfile
- *   - ALB for HTTPS-ready HTTP access; SPA is served from the same container
+ *   - ALB HTTP access; SPA and API served from the same container
  *
  * Outbound Coinbase access requires NAT (ec2 NAT used here for lower demo cost).
  */
@@ -57,7 +57,7 @@ export default $config({
       environment: {
         NODE_ENV: "production",
         PORT: "3000",
-        // Same-origin SPA + API on the ALB; Secure cookies need HTTPS/custom domain.
+        // Same-origin SPA + API on the HTTP ALB. Secure cookies require HTTPS.
         COOKIE_SECURE: "false",
         DB_SSL: "true",
         DB_HOST: database.host,
@@ -92,7 +92,6 @@ export default $config({
         retries: 3,
         timeout: "5 seconds",
       },
-      wait: false,
       logging: { retention: "1 week" },
     });
 

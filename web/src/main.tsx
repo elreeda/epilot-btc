@@ -11,6 +11,7 @@ function errorStatus(error: unknown): number | undefined {
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import type { GameState as State } from "../../server/src/contracts.js";
+import { createIdempotencyKey } from "./idempotency-key.js";
 import { PriceChart } from "./price-chart.js";
 import { RoundHistory } from "./round-history.js";
 
@@ -98,12 +99,12 @@ function App() {
     if (busy) return;
     setBusy(true);
     setError("");
-    const payload = pendingRequest.current ?? {
-      direction,
-      idempotencyKey: crypto.randomUUID(),
-    };
-    pendingRequest.current = payload;
     try {
+      const payload = pendingRequest.current ?? {
+        direction,
+        idempotencyKey: createIdempotencyKey(),
+      };
+      pendingRequest.current = payload;
       await request("/api/guesses", payload);
       pendingRequest.current = null;
       await refresh();
@@ -338,7 +339,6 @@ function App() {
                 </div>
                 <details>
                   <summary>View settlement evidence</summary>
-                  <p>Rule: {result.ruleVersion}</p>
                   <p>
                     Starting trade #{result.startingTrade.id}
                     <br />

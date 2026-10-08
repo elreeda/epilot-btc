@@ -1,6 +1,5 @@
 import { z } from "zod";
 export const PRODUCT = "BTC-USD";
-export const RULE = "verified-acceptance-first-differing-v2";
 
 import type { Direction } from "./contracts.js";
 

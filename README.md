@@ -2,27 +2,13 @@
 
 A one-minute BTC-USD prediction game. Players choose higher or lower, receive +1 for a correct guess or −1 for an incorrect one, and return to their score in the same browser. There are no payments or financial stakes. Your personal round history shows completed calls, prices, timestamps, and points, with older rounds available in pages of twenty.
 
+Live demo: [Minute / BTC](http://ApiLoadBalancer-zsecstnd-701550995.eu-central-1.elb.amazonaws.com/).
+
 ## Engineer onboarding
 
 Use the [onboarding guide](docs/ONBOARDING.md) for local setup, the code map, failure behavior, and first contributions. The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) explains architecture, settlement, recovery, and engineering decisions. Edit the diagrams directly in tldraw.
 
-## Agent onboarding
-
-Fair settlement is a checklist, not vibe coding. Portable Agent Skills live under [`.agents/skills/`](.agents/skills/) (see also root [`AGENTS.md`](AGENTS.md)). Cursor, Codex, and Claude-compatible tooling can discover them from that layout (Claude Code via [`.claude/skills/`](.claude/skills/) symlinks into `.agents/skills/`).
-
-| Skill | Purpose |
-| --- | --- |
-| [`settlement-fairness`](.agents/skills/settlement-fairness/SKILL.md) | Server-owned prices, feed/reconnect expectations, round lifecycle, no client-trusted resolve |
-| [`btc-guess-change`](.agents/skills/btc-guess-change/SKILL.md) | Safe touch points (API, domain, UI, tests) and verify-before-done |
-| [`verify-btc-guess`](.agents/skills/verify-btc-guess/SKILL.md) | Commands and evidence for unit/integration/e2e and optional live checks |
-
-Example prompt:
-
-> Using settlement-fairness and verify-btc-guess, tighten the admission freshness window without accepting client prices. Run `pnpm verify` and report what passed.
-
-**Optional Cursor tip:** install the pstack plugin (`/add-plugin pstack`) and use `/poteto-mode` to route through these skills — not required for other agents.
-
-Local gate: `pnpm verify` (see [`scripts/verify.sh`](scripts/verify.sh)). For a deployed check after SST (stage `reda`), use the ALB URL printed by `sst deploy` and hit `/healthz` — do not invent URLs. Human setup remains in [Engineer onboarding](#engineer-onboarding) and [Verification](#verification).
+Agent instructions and the verification gate live in [AGENTS.md](AGENTS.md).
 
 ## Run locally
 
@@ -35,9 +21,22 @@ docker compose up -d db
 pnpm dev
 ```
 
-Open http://localhost:5173. The backend runs on port 3000. The initial connection verifies Coinbase history before enabling guesses. Development uses an HTTP-only localhost cookie; production always sets Secure.
+Open http://localhost:5173. The backend runs on port 3000. The initial connection verifies Coinbase history before enabling guesses. Cookies are HttpOnly and SameSite=Lax. Local HTTP and the current ALB HTTP demo use `COOKIE_SECURE=false`.
 
 Alternatively, `docker compose up --build` starts the database and backend. Start `pnpm dev:web` separately and open port 5173.
+
+### Reset disposable demo data
+
+The challenge schema is consolidated into `server/migrations/001_initial.sql`. Databases created from the earlier migration set need a one-time reset, including `schema_migrations`. Stop the backend first. This removes all players, rounds, prices, and checkpoints.
+
+For the local Docker database:
+
+```sh
+docker compose exec -T db psql -U btc -d btc -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+pnpm dev
+```
+
+The backend recreates the schema on startup. For an existing deployed demo, stop its backend and run the same SQL against that demo database before starting the new build. Redeploying alone will not reset migration checksums. Future schema changes should add migrations rather than edit this baseline.
 
 ## Rules and fairness
 
@@ -47,7 +46,7 @@ Admission still requires heartbeat, verification, and latest trade each no more 
 
 The first trade **at or after** the deadline with a price different from the starting price decides the result. Trades are ordered by exchange timestamp, then trade ID. Equal prices keep the round pending. Up wins on a higher price; down wins on a lower price. Scores can become negative. Exchange timestamps retain microseconds as bigint values and prices use PostgreSQL arbitrary-precision numeric; JavaScript floating point is used only for display formatting.
 
-There is one price source. New rounds use `verified-acceptance-first-differing-v2`; existing `first-differing-trade-v1` rounds retain their original starting price and rule. This is a Coinbase Exchange price, not a claim about a universal Bitcoin price. The UI exposes the starting trade, deadline, and settlement trade as evidence.
+There is one price source. Every round uses the same verified acceptance and first differing trade rules described above. This is a Coinbase Exchange price, not a claim about a universal Bitcoin price. The UI exposes the starting trade, deadline, and settlement trade as evidence.
 
 ## Architecture
 
@@ -128,7 +127,7 @@ Those need always-on compute and a real Postgres. The SST stack therefore provis
 | API + workers + SPA | `sst.aws.Service` on ECS Fargate (ARM) | Runs the existing Dockerfile (Fastify + workers; serves `web/dist`) |
 | Public HTTP | Application Load Balancer on the service | `/healthz` health checks; same-origin `/api` + UI |
 
-Config lives in [`sst.config.ts`](sst.config.ts) using **`sst@4.17.1`** (npm `latest`). Personal stage name: **`reda`**.
+Config lives in [`sst.config.ts`](sst.config.ts) using SST v4. Personal stage name: **`reda`**.
 
 ### Prerequisites
 
@@ -147,9 +146,11 @@ pnpm build          # produces web/dist used by the image
 pnpm deploy         # → sst deploy --stage reda
 ```
 
-After deploy, SST prints the ALB `url`. Open it, complete a real 60s round, and confirm `/healthz`.
+Reset an older demo schema as described above before deploying the consolidated baseline.
 
-Optional HTTPS: add `loadBalancer.domain` in `sst.config.ts`, set `COOKIE_SECURE=true`, and set `APP_ORIGIN` to the HTTPS origin.
+After deploy, SST prints the ALB `url`. Open it, complete a real 60s round, refresh to check persistence, and confirm `/healthz`. The browser creates cryptographically random UUID idempotency keys using `getRandomValues()`, which works on HTTP.
+
+Optional HTTPS: add a custom domain and certificate to the ALB, set `COOKIE_SECURE=true`, and configure `APP_ORIGIN` to the HTTPS origin.
 
 ### Tear down
 
@@ -158,12 +159,6 @@ pnpm deploy:remove  # → sst remove --stage reda
 ```
 
 RDS and related resources are removed for non-`production` stages (`removal: "remove"`). Expect ongoing cost while deployed (Fargate + RDS + NAT EC2 + ALB + public IPv4) even with no players — tear down when finished.
-
-### What we deliberately did not do
-
-- **Lambda for the collector/API**: no durable Coinbase WebSocket, poor fit for advisory-lock workers.
-- **Aurora Serverless pause**: workers need a continuously reachable DB.
-- **Automatic `sst deploy` from this setup commit**: requires your AWS credentials.
 
 ## Deliberate limits
 

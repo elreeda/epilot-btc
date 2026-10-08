@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 import { buildApp } from "../src/app.js";
 import { createPool, migrate } from "../src/db.js";
-import { isoUs, RULE, timestampUs } from "../src/domain.js";
+import { isoUs, timestampUs } from "../src/domain.js";
 import {
   commitCoverage,
   roundHistory,
@@ -67,7 +67,7 @@ describe("transactional game state", () => {
     const g = (await submitGuess(pool, p.id, "up", key))!;
     const accepted = timestampUs(g.submittedAt);
     expect(g.startingTrade).toBeNull();
-    expect(g.ruleVersion).toBe(RULE);
+    expect(g).not.toHaveProperty("ruleVersion");
     expect(timestampUs(g.deadline) - accepted).toBe(60000000n);
     const c = await pool.connect();
     try {
@@ -221,7 +221,7 @@ describe("transactional game state", () => {
     expect(locked.deadline).toBe(original.deadline);
   });
 
-  it("keeps an existing v1 round's starting price and prevents partial or resolved unlocked evidence", async () => {
+  it("enforces complete start evidence and acceptance time for every round", async () => {
     const p = await session(pool);
     const { g, now } = await eligible(p.id);
     await expect(
@@ -233,31 +233,16 @@ describe("transactional game state", () => {
         [g.id, now.toString()],
       ),
     ).rejects.toThrow("complete_start_evidence");
-    await pool.query(
-      "UPDATE guesses SET rule_version='first-differing-trade-v1',start_trade_id=1,start_time_us=$2,start_price=100 WHERE id=$1",
-      [g.id, (now - 61000000n).toString()],
+    await expect(
+      pool.query(
+        "UPDATE guesses SET start_trade_id=1,start_time_us=submitted_us+1,start_price=100 WHERE id=$1",
+        [g.id],
+      ),
+    ).rejects.toThrow("acceptance_start_time");
+    const { rows } = await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='guesses' AND column_name='rule_version'",
     );
-    const c = await pool.connect();
-    try {
-      await commitCoverage(
-        c,
-        [
-          { id: "2", timeUs: now - 61000000n, price: "102" },
-          { id: "3", timeUs: now - 1000000n, price: "101" },
-        ],
-        "3",
-        now,
-        new Date(),
-        () => true,
-      );
-      await settle(c, () => true);
-    } finally {
-      c.release();
-    }
-    const result = (await state(pool, p.id)).latestResult!;
-    expect(result.ruleVersion).toBe("first-differing-trade-v1");
-    expect(result.startingTrade.price).toBe("100");
-    expect(result.scoreDelta).toBe(1);
+    expect(rows).toHaveLength(0);
   });
 
   it("round history is private, newest first, and paginates without duplicates at timestamp ties", async () => {
@@ -528,6 +513,89 @@ describe("transactional game state", () => {
       ).toBe(403);
     } finally {
       await app.close();
+    }
+  });
+  it("accepts HTTP ALB same-origin writes and rejects mismatched origins", async () => {
+    const saved = {
+      NODE_ENV: process.env.NODE_ENV,
+      COOKIE_SECURE: process.env.COOKIE_SECURE,
+      APP_ORIGIN: process.env.APP_ORIGIN,
+      ORIGIN_SECRET: process.env.ORIGIN_SECRET,
+    };
+    process.env.NODE_ENV = "production";
+    process.env.COOKIE_SECURE = "false";
+    delete process.env.ORIGIN_SECRET;
+    delete process.env.APP_ORIGIN;
+    const app = await buildApp(pool);
+    const headers = {
+      host: "demo.elb.amazonaws.com",
+      origin: "http://demo.elb.amazonaws.com",
+      "sec-fetch-site": "same-origin",
+    };
+    try {
+      expect((await app.inject({ url: "/api/state" })).statusCode).toBe(401);
+      expect((await app.inject({ url: "/healthz" })).statusCode).toBe(200);
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/session",
+        headers,
+        payload: {},
+      });
+      expect(first.statusCode).toBe(200);
+      expect(first.headers["set-cookie"]).not.toContain("Secure");
+      const cookie = first.headers["set-cookie"]!.toString().split(";")[0];
+      expect(
+        (
+          await app.inject({
+            url: "/api/state",
+            headers: { ...headers, cookie },
+          })
+        ).statusCode,
+      ).toBe(200);
+      const again = await app.inject({
+        method: "POST",
+        url: "/api/session",
+        headers: { ...headers, cookie },
+        payload: {},
+      });
+      expect(again.headers["set-cookie"]!.toString().split(";")[0]).toBe(
+        cookie,
+      );
+      expect(again.headers["cache-control"]).toBe("no-store");
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: "/api/session",
+            headers: { ...headers, origin: "https://evil.example" },
+            payload: {},
+          })
+        ).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: "/api/session",
+            headers: { ...headers, origin: "" },
+            payload: {},
+          })
+        ).statusCode,
+      ).toBe(403);
+      await seed();
+      const call = await app.inject({
+        method: "POST",
+        url: "/api/guesses",
+        headers: { ...headers, cookie },
+        payload: { direction: "up", idempotencyKey: randomUUID() },
+      });
+      expect(call.statusCode).toBe(201);
+    } finally {
+      await app.close();
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
   it("recovers a dropped WebSocket trade using REST before awarding points", async () => {

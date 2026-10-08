@@ -15,7 +15,6 @@ export interface Guess {
   startingTrade: TradeEvidence | null;
   settlementTrade: TradeEvidence | null;
   scoreDelta: number | null;
-  ruleVersion: string;
 }
 export type ResolvedGuess = Guess & {
   status: "resolved";

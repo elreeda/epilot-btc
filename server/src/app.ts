@@ -26,7 +26,13 @@ function sameHostOrigin(origin: string | undefined, host: string | undefined) {
 
 export async function buildApp(pool: pg.Pool) {
   const app = Fastify({
-    logger: { redact: ["req.headers.cookie", "req.headers.authorization"] },
+    logger: {
+      redact: [
+        "req.headers.cookie",
+        "req.headers.authorization",
+        "req.headers.x-origin-secret",
+      ],
+    },
     trustProxy: true,
     bodyLimit: 4096,
   });
@@ -51,6 +57,7 @@ export async function buildApp(pool: pg.Pool) {
           origin ?? "",
         );
       const sameHost = sameHostOrigin(origin, req.headers.host);
+      const production = process.env.NODE_ENV === "production";
       if (
         req.headers["sec-fetch-site"] === "cross-site" ||
         (origin &&
@@ -58,7 +65,8 @@ export async function buildApp(pool: pg.Pool) {
           origin !== expected &&
           !localAlias &&
           !sameHost) ||
-        (!origin && process.env.NODE_ENV === "production")
+        (production && !expected && !sameHost) ||
+        (!origin && production)
       )
         throw new HttpError(403, "Request origin is not allowed.");
     }
