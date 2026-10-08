@@ -1,6 +1,7 @@
 import { type BrowserContext, expect, test } from "@playwright/test";
 
 const trade = { id: "100", price: "60000", time: new Date().toISOString() };
+
 const base = () => ({
   serverTime: new Date().toISOString(),
   score: 0,
@@ -18,11 +19,14 @@ const base = () => ({
   activeGuess: null as any,
   latestResult: null as any,
 });
+
 async function fixture(context: BrowserContext, locking = false) {
   const state = base();
   let submissions = 0;
+
   await context.route("**/api/**", async (route) => {
     const url = route.request().url();
+
     if (url.endsWith("/session"))
       return route.fulfill({
         json: { ready: true },
@@ -30,6 +34,7 @@ async function fixture(context: BrowserContext, locking = false) {
           "Set-Cookie": "btc_session=test; Path=/; HttpOnly; SameSite=Lax",
         },
       });
+
     if (new URL(url).pathname === "/api/rounds")
       return route.fulfill({
         json: {
@@ -37,14 +42,18 @@ async function fixture(context: BrowserContext, locking = false) {
           nextCursor: null,
         },
       });
+
     if (url.endsWith("/guesses")) {
       submissions++;
+
       if (state.activeGuess)
         return route.fulfill({
           status: 409,
           json: { message: "You already have a pending guess." },
         });
+
       const { direction } = route.request().postDataJSON();
+
       state.activeGuess = {
         id: "guess",
         direction,
@@ -55,11 +64,15 @@ async function fixture(context: BrowserContext, locking = false) {
         settlementTrade: null,
         scoreDelta: null,
       };
+
       return route.fulfill({ status: 201, json: state.activeGuess });
     }
+
     state.serverTime = new Date().toISOString();
+
     return route.fulfill({ json: state });
   });
+
   return {
     get state() {
       return state;
@@ -69,11 +82,13 @@ async function fixture(context: BrowserContext, locking = false) {
     },
   };
 }
+
 test("call survives refresh, settles, and allows another round", async ({
   page,
   context,
 }) => {
   const f = await fixture(context);
+
   await page.goto("/");
   await expect(
     page.getByRole("heading", { name: "Bitcoin", exact: true }),
@@ -108,6 +123,7 @@ test("call survives refresh, settles, and allows another round", async ({
     page.getByRole("region", { name: "Your rounds" }).getByText("Won"),
   ).toBeVisible();
 });
+
 test("two tabs and closing the browser page keep the pending round", async ({
   page,
   context,
@@ -115,18 +131,22 @@ test("two tabs and closing the browser page keep the pending round", async ({
   await fixture(context);
   await page.goto("/");
   await page.getByRole("button", { name: "Lower" }).click();
+
   const second = await context.newPage();
+
   await second.goto("/");
   await expect(second.getByText("Your call is in.")).toBeVisible();
   await page.close();
   await second.reload();
   await expect(second.getByText("Your call is in.")).toBeVisible();
 });
+
 test("stale feed blocks controls and layout fits viewport", async ({
   page,
   context,
 }) => {
   const f = await fixture(context);
+
   f.state.market.status = "stale";
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Higher" })).toBeDisabled();
@@ -137,13 +157,17 @@ test("stale feed blocks controls and layout fits viewport", async ({
     ),
   ).toBe(true);
 });
+
 test("keyboard can submit and recovery keeps accepted round visible", async ({
   page,
   context,
 }) => {
   const f = await fixture(context);
+
   await page.goto("/");
+
   const higher = page.getByRole("button", { name: "Higher" });
+
   await expect(higher).toBeEnabled();
   await higher.focus();
   await page.keyboard.press("Enter");
@@ -160,6 +184,7 @@ test("locking price survives refresh and recovery without resetting the deadline
   context,
 }) => {
   const f = await fixture(context, true);
+
   await page.goto("/");
   await page.getByRole("button", { name: "Higher" }).click();
   await expect(
@@ -168,7 +193,9 @@ test("locking price survives refresh and recovery without resetting the deadline
   await expect(
     page.getByText("Starting price is being verified"),
   ).toBeVisible();
+
   const deadline = f.state.activeGuess.deadline;
+
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "Locking price…" }),
@@ -198,11 +225,15 @@ test("submits without randomUUID and reuses the key after a lost response", asyn
   await context.addInitScript(() => {
     Object.defineProperty(crypto, "randomUUID", { value: undefined });
   });
+
   const f = await fixture(context);
   const keys: string[] = [];
+
   await context.route("**/api/guesses", async (route) => {
     keys.push(route.request().postDataJSON().idempotencyKey);
+
     if (keys.length === 1) return route.abort("failed");
+
     return route.fallback();
   });
   await page.goto("/");
@@ -232,7 +263,9 @@ test("random byte generation failure releases submitting controls", async ({
       },
     });
   });
+
   const f = await fixture(context);
+
   await page.goto("/");
   await page.getByRole("button", { name: "Higher" }).click();
   await expect(page.getByRole("alert")).toContainText(

@@ -11,6 +11,7 @@ const t = (id: string, timeUs = BigInt(id), price = "100"): Trade => ({
   timeUs,
   price,
 });
+
 describe("REST verification and recovery", () => {
   it("uses canonical REST time and preserves differing WebSocket timestamp evidence", async () => {
     const recovered = await recoverInterval(
@@ -22,6 +23,7 @@ describe("REST verification and recovery", () => {
       "11",
       [t("11", 61n, "101")],
     );
+
     expect(recovered[1].timeUs).toBe(60n);
     expect(recovered[1].wsTimeUs).toBe(61n);
   });
@@ -40,13 +42,17 @@ describe("REST verification and recovery", () => {
 
   it("uses provider older-page cursors and deduplicates overlap", async () => {
     const calls: (string | undefined)[] = [];
+
     const page: FetchPage = async (after) => {
       calls.push(after);
+
       return after
         ? { trades: [t("11"), t("10")], after: null }
         : { trades: [t("14"), t("13"), t("11")], after: "older-cursor" };
     };
+
     const result = await recoverInterval(page, "10", "13", [t("13"), t("11")]);
+
     expect(calls).toEqual([undefined, "older-cursor"]);
     expect(result.map((t) => t.id)).toEqual(["10", "11", "13"]);
   });
@@ -140,6 +146,7 @@ describe("REST verification and recovery", () => {
       "12",
       [all[2]],
     );
+
     expect(chooseSettlement(recovered, 60n, "100")).toEqual(
       chooseSettlement(all, 60n, "100"),
     );

@@ -5,6 +5,7 @@ const money = (value: string) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     Number(value),
   );
+
 export function RoundHistory({
   ready,
   latestId,
@@ -22,11 +23,14 @@ export function RoundHistory({
     [error, setError] = useState("");
   const version = useRef(0);
   const retryPage = useRef(false);
+
   async function load(append = false) {
     const own = ++version.current;
+
     retryPage.current = append;
     setLoading(true);
     setError("");
+
     try {
       const url =
         "/api/rounds" +
@@ -35,9 +39,12 @@ export function RoundHistory({
           : "");
       const response = await fetch(url);
       const next = await response.json();
+
       if (!response.ok)
         throw new Error(next.message ?? "Could not load your rounds.");
+
       if (own !== version.current) return;
+
       setHistory((previous) => ({
         rounds: append
           ? [
@@ -56,14 +63,17 @@ export function RoundHistory({
       if (own === version.current) setLoading(false);
     }
   }
+
   // Reload when session/ready/latest result/offline changes; load reads latest state via refs.
   // biome-ignore lint/correctness/useExhaustiveDependencies: load intentionally omitted
   useEffect(() => {
     if (ready) void load();
+
     return () => {
       version.current++;
     };
   }, [ready, latestId, offline]);
+
   return (
     <section className="round-history" aria-labelledby="history-title">
       <div className="history-heading">

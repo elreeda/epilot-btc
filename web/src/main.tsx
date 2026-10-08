@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 
-function errorStatus(error: unknown): number | undefined {
-  if (error && typeof error === "object" && "status" in error) {
-    const status = (error as { status?: unknown }).status;
-    return typeof status === "number" ? status : undefined;
-  }
-  return undefined;
-}
-
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import type {
@@ -18,6 +10,16 @@ import { createIdempotencyKey } from "./idempotency-key.js";
 import { PriceChart } from "./price-chart.js";
 import { RoundHistory } from "./round-history.js";
 
+function errorStatus(error: unknown): number | undefined {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+
+    return typeof status === "number" ? status : undefined;
+  }
+
+  return undefined;
+}
+
 const money = (value: string | null) =>
   value === null
     ? "—"
@@ -27,6 +29,7 @@ const money = (value: string | null) =>
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       }).format(Number(value));
+
 async function request(path: string, body?: unknown) {
   const res = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -34,12 +37,15 @@ async function request(path: string, body?: unknown) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json();
+
   if (!res.ok)
     throw Object.assign(new Error(data.message ?? "Could not connect."), {
       status: res.status,
     });
+
   return data;
 }
+
 function App() {
   const [state, setState] = useState<State | null>(null),
     [error, setError] = useState(""),
@@ -52,16 +58,21 @@ function App() {
     inflight = useRef(false);
   // Retain the key after an ambiguous network failure; retrying must not create a new round.
   const pendingRequest = useRef<SubmitGuess | null>(null);
+
   async function refresh() {
     if (inflight.current) return;
+
     inflight.current = true;
+
     try {
       if (!sessionReady.current) {
         await request("/api/session", {});
         sessionReady.current = true;
       }
+
       const started = Date.now();
       const next: State = await request("/api/state");
+
       if (alive.current) {
         offset.current =
           Date.parse(next.serverTime) - (started + Date.now()) / 2;
@@ -71,22 +82,28 @@ function App() {
     } catch (e) {
       if (alive.current) {
         setOffline(true);
+
         if (errorStatus(e) === 401) sessionReady.current = false;
       }
     } finally {
       inflight.current = false;
     }
   }
+
   // Mount-only poll/listeners; refresh closes over latest refs/state setters.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional empty deps
   useEffect(() => {
     alive.current = true;
     void refresh();
+
     const polling = setInterval(() => void refresh(), 2000),
       tick = setInterval(() => setNow(Date.now()), 250);
+
     const focus = () => void refresh();
+
     window.addEventListener("focus", focus);
     window.addEventListener("online", focus);
+
     return () => {
       alive.current = false;
       clearInterval(polling);
@@ -95,28 +112,36 @@ function App() {
       window.removeEventListener("online", focus);
     };
   }, []);
+
   async function guess(direction: "up" | "down") {
     if (busy) return;
+
     setBusy(true);
     setError("");
+
     try {
       const payload = pendingRequest.current ?? {
         direction,
         idempotencyKey: createIdempotencyKey(),
       };
+
       pendingRequest.current = payload;
       await request("/api/guesses", payload);
       pendingRequest.current = null;
       await refresh();
     } catch (e) {
       setError((e as Error).message);
+
       const status = errorStatus(e);
+
       if (status && status < 500) pendingRequest.current = null;
+
       await refresh();
     } finally {
       setBusy(false);
     }
   }
+
   const active = state?.activeGuess,
     remaining = active
       ? Math.max(
@@ -161,6 +186,7 @@ function App() {
         ? "You can make a call once fresh market data is verified."
         : "Make your call. One minute. One point on the line.";
   const result = state?.latestResult;
+
   return (
     <main>
       <header>
@@ -388,4 +414,5 @@ function App() {
     </main>
   );
 }
+
 createRoot(document.getElementById("root")!).render(<App />);

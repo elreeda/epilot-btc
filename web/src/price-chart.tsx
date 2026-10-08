@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { GameState } from "../../server/src/contracts.js";
 
 type Point = { time: string; price: string };
+
 const formatPrice = (value: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     value,
@@ -30,11 +31,14 @@ export function PriceChart({
   const low = values.length ? Math.min(...values) : 0;
   const high = values.length ? Math.max(...values) : 0;
   const padding = Math.max((high - low) * 0.15, high * 0.00002, 0.01);
+
   const x = (point: Point) =>
     8 + ((Date.parse(point.time) - start) / 600_000) * 704;
+
   const y = (point: Point) =>
     166 -
     ((Number(point.price) - low + padding) / (high - low + padding * 2)) * 150;
+
   const path = points
     .map((p, i) => `${i ? "L" : "M"} ${x(p).toFixed(2)} ${y(p).toFixed(2)}`)
     .join(" ");
@@ -42,6 +46,7 @@ export function PriceChart({
     hover === null ? undefined : points[Math.min(hover, points.length - 1)];
   const sign = change > 0 ? "+" : change < 0 ? "−" : "";
   const trend = change < 0 ? "falling" : "rising";
+
   return (
     <section
       className={`market-chart ${trend}`}
@@ -87,6 +92,7 @@ export function PriceChart({
                 ) *
                   600_000;
               let nearest = 0;
+
               points.forEach((p, i) => {
                 if (
                   Math.abs(Date.parse(p.time) - target) <

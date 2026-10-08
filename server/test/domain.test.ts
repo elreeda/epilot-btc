@@ -11,6 +11,7 @@ import {
 describe("precise settlement rules", () => {
   it("preserves microseconds round trip", () => {
     const t = "2026-10-07T12:00:00.123456Z";
+
     expect(isoUs(timestampUs(t))).toBe(t);
   });
   it("compares exact decimals without floating point rounding", () => {
@@ -24,6 +25,7 @@ describe("precise settlement rules", () => {
       { id: "1", timeUs: 59n, price: "102" },
       { id: "2", timeUs: 60n, price: "100" },
     ];
+
     expect(chooseSettlement(trades, 60n, "100")?.id).toBe("3");
   });
   it("breaks exact timestamp ties by trade ID", () =>
