@@ -2,7 +2,7 @@
 
 A one-minute BTC-USD prediction game. Players choose higher or lower, receive +1 for a correct guess or −1 for an incorrect one, and return to their score in the same browser. There are no payments or financial stakes. Your personal round history shows completed calls, prices, timestamps, and points, with older rounds available in pages of twenty.
 
-Live demo: [Minute / BTC](http://ApiLoadBalancer-zsecstnd-701550995.eu-central-1.elb.amazonaws.com/).
+Live demo: [Minute / BTC](https://epilot-btc.online/).
 
 ## Project guide
 
@@ -21,7 +21,7 @@ docker compose up -d db
 pnpm dev
 ```
 
-Open http://localhost:5173. The backend runs on port 3000. The initial connection verifies Coinbase history before enabling guesses. Cookies are HttpOnly and SameSite=Lax. Local HTTP and the current ALB HTTP demo use `COOKIE_SECURE=false`.
+Open http://localhost:5173. The backend runs on port 3000. The initial connection verifies Coinbase history before enabling guesses. Cookies are HttpOnly and SameSite=Lax. Local HTTP uses `COOKIE_SECURE=false`; the deployed HTTPS app uses secure cookies.
 
 Alternatively, `docker compose up --build` starts the database and backend. Start `pnpm dev:web` separately and open port 5173.
 
@@ -115,9 +115,11 @@ SST defines and deploys the AWS infrastructure in TypeScript. An always-running 
 | Network + cheap NAT | `sst.aws.Vpc` (`nat: "ec2"`) | Network isolation and outbound access to Coinbase |
 | Database | `sst.aws.Postgres` (RDS 17, `t4g.micro`) | Durable ledger, locks, migrations |
 | API + workers + SPA | `sst.aws.Service` on ECS Fargate (ARM) | Runs the existing Dockerfile (Fastify + workers; serves `web/dist`) |
-| Public HTTP | Application Load Balancer on the service | `/healthz` health checks; same-origin `/api` + UI |
+| Public HTTPS | Application Load Balancer on the service + ACM certificate | TLS termination, HTTP redirect, `/healthz` health checks; same-origin `/api` + UI |
 
 Config lives in [`sst.config.ts`](sst.config.ts) using SST v4. Personal stage name: **`reda`**.
+
+Namecheap manages DNS for `epilot-btc.online`. An AWS Certificate Manager (ACM) certificate enables HTTPS on the Application Load Balancer (ALB); HTTP requests redirect to the HTTPS domain. The ALB forwards requests to the container over HTTP inside the VPC. Frontend and API share one origin, with `COOKIE_SECURE=true` and `APP_ORIGIN=https://epilot-btc.online`. CloudFront is not required.
 
 ### Prerequisites
 
@@ -125,6 +127,7 @@ Config lives in [`sst.config.ts`](sst.config.ts) using SST v4. Personal stage na
 2. Working credentials (`aws configure`, SSO, or env vars). Empty `~/.aws/credentials` will fail.
 3. Docker Desktop running (image build for Fargate).
 4. `pnpm install`
+5. For a different account or domain, request and DNS-validate an ACM certificate in `eu-central-1`, then update the domain, certificate ARN, origin, and redirect host in `sst.config.ts`. In Namecheap, retain the ACM validation CNAME and point an ALIAS record at `@` to the deployed ALB hostname; remove conflicting parking or redirect records.
 
 ### Deploy
 
@@ -136,9 +139,7 @@ pnpm build          # produces web/dist used by the image
 pnpm deploy         # → sst deploy --stage reda
 ```
 
-After deploy, SST prints the ALB `url`. Open it, complete a real 60s round, refresh to check persistence, and confirm `/healthz`. The browser creates cryptographically random UUID idempotency keys using `getRandomValues()`, which works on HTTP.
-
-Optional HTTPS: add a custom domain and certificate to the ALB, set `COOKIE_SECURE=true`, and configure `APP_ORIGIN` to the HTTPS origin.
+After deploy, SST prints the HTTPS `url`. Open it, complete a real 60s round, refresh to check persistence, and confirm `/healthz`.
 
 ### Tear down
 
@@ -147,6 +148,8 @@ pnpm deploy:remove  # → sst remove --stage reda
 ```
 
 RDS and related resources are removed for non-`production` stages (`removal: "remove"`). Expect ongoing cost while deployed (Fargate + RDS + NAT EC2 + ALB + public IPv4) even with no players — tear down when finished.
+
+The ACM certificate and Namecheap domain/DNS records are managed outside SST; removal does not delete them.
 
 ## Deliberate limits
 

@@ -10,7 +10,7 @@
  * starts, 15-minute limits). SST therefore deploys:
  *   - RDS Postgres (sst.aws.Postgres)
  *   - ECS Fargate service (sst.aws.Service) running the existing Dockerfile
- *   - ALB HTTP access; SPA and API served from the same container
+ *   - ALB HTTPS access; SPA and API served from the same container
  *
  * Outbound Coinbase access requires NAT (ec2 NAT used here for lower demo cost).
  */
@@ -57,8 +57,8 @@ export default $config({
       environment: {
         NODE_ENV: "production",
         PORT: "3000",
-        // Same-origin SPA + API on the HTTP ALB. Secure cookies require HTTPS.
-        COOKIE_SECURE: "false",
+        APP_ORIGIN: "https://epilot-btc.online",
+        COOKIE_SECURE: "true",
         DB_SSL: "true",
         DB_HOST: database.host,
         DB_PORT: $interpolate`${database.port}`,
@@ -70,7 +70,15 @@ export default $config({
       // always-on leader is enough for this demo and avoids duplicate WS load.
       scaling: { min: 1, max: 1 },
       loadBalancer: {
-        rules: [{ listen: "80/http", forward: "3000/http" }],
+        domain: {
+          name: "epilot-btc.online",
+          dns: false, // Namecheap manages DNS; the certificate is validated there.
+          cert: "arn:aws:acm:eu-central-1:253376448059:certificate/e039f9ec-86b5-4a57-b626-755bd44cfa42",
+        },
+        rules: [
+          { listen: "80/http", redirect: "443/https" },
+          { listen: "443/https", forward: "3000/http" },
+        ],
         health: {
           "3000/http": {
             path: "/healthz",
@@ -80,6 +88,22 @@ export default $config({
             unhealthyThreshold: 3,
             successCodes: "200",
           },
+        },
+      },
+      transform: {
+        listener(args) {
+          if (args.port === 80) {
+            // The old ALB URL also redirects to the certificate's domain.
+            args.defaultActions = [{
+              type: "redirect",
+              redirect: {
+                host: "epilot-btc.online",
+                port: "443",
+                protocol: "HTTPS",
+                statusCode: "HTTP_301",
+              },
+            }];
+          }
         },
       },
       health: {

@@ -76,7 +76,7 @@ Previously verified historical rounds can still settle while the current feed is
 
 ## Known limits and next priorities
 
-The demo is deployed over HTTP. It uses cryptographic browser-generated idempotency keys that work in this environment, but the session cookie cannot have the Secure flag until HTTPS is configured. HTTPS remains a deployment priority.
+The demo runs at [https://epilot-btc.online](https://epilot-btc.online). Namecheap manages DNS; the AWS Application Load Balancer terminates HTTPS with an ACM certificate and redirects HTTP requests to the HTTPS domain. Frontend and API share one origin, and production session cookies use the Secure flag. Deployment setup is documented in the README.
 
 Recovery waits one second for REST publication, fetches the target trade and preceding history, and follows Coinbase's pagination cursors back to the saved checkpoint. Missing evidence keeps affected rounds pending until recovery succeeds. The five-second freshness gate can also block new guesses when no new trade arrives despite a healthy connection.
 
