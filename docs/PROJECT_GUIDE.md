@@ -2,7 +2,7 @@
 
 This guide explains the product, architecture, correctness rules, and code layout for humans and coding agents working on the project. Use the [README](../README.md) for setup and deployment instructions. Coding agents should also read [AGENTS.md](../AGENTS.md) and the relevant repository skills before making changes.
 
-The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) illustrates the architecture, round lifecycle, recovery, engineering decisions, and contributing with AI and repository skills. Edit the diagrams directly in tldraw.
+The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) illustrates the architecture, round lifecycle, recovery, engineering decisions, and contributing with AI and repository skills.
 
 ## What we are building
 

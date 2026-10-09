@@ -6,7 +6,7 @@ Live demo: [Minute / BTC](https://epilot-btc.online/).
 
 ## Project guide
 
-Use the [project guide](docs/PROJECT_GUIDE.md) for product context, architecture, the code map, failure behavior, and guidance for making changes. The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) explains architecture, settlement, recovery, engineering decisions, and contributing with AI and repository skills. Edit the diagrams directly in tldraw.
+Use the [project guide](docs/PROJECT_GUIDE.md) for product context, architecture, the code map, failure behavior, and guidance for making changes. The [shared tldraw engineering board](https://www.tldraw.com/f/fW_iaGZHE_WFKlawnExWh?d=v-452.-507.4774.3291.page) explains architecture, settlement, recovery, engineering decisions, and contributing with AI and repository skills.
 
 Agent instructions and the verification gate live in [AGENTS.md](AGENTS.md).
 
